@@ -577,7 +577,6 @@
         'necrophilia': '奸尸',
         'nepali': '尼泊尔语',
         'netorare': 'NTR',
-        'netorase': '送妻',
         'niece': '侄女',
         'ninja': '忍者装',
         'nipple birth': '乳头出产',
@@ -802,7 +801,6 @@
         'swedish': '瑞典语',
         'swimming pool': '泳池',
         'swimsuit': '泳装',
-        'swinging': '换妻',
         'syringe': '注射器',
         'tabi socks': '足袋',
         'table masturbation': '桌角自慰',
@@ -925,6 +923,14 @@
         'food on body': {
             'male': '男体盛宴',
             'female': '女体盛宴'
+        }
+        'netorase': {
+            'male': '送夫',
+            'female': '送妻'
+        }
+        'swinging': {
+            'male': '换夫',
+            'female': '换妻'
         }
     };
 
