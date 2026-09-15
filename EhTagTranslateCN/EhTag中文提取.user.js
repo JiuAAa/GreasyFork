@@ -6,7 +6,7 @@
 // @author https://t.me/BGG_Comics
 // @homepage https://github.com/EhTagTranslation/Database
 // @supportURL https://github.com/EhTagTranslation/Database/issues
-// @license MIT
+// @license GPL-3.0
 // @match *://e-hentai.org/g/*
 // @match *://exhentai.org/g/*
 // @icon https://raw.githubusercontent.com/EhTagTranslation/Database/master/README.md
