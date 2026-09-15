@@ -17,3 +17,7 @@ EhTag数据库TXT导出工具
 Eh中文标签提取工具
   - ExHentai标签提取器 + EhTag中文提取 （字典 + 数据库）
   - 数据库翻译由 EhTagTranslation 项目获取
+
+EhTag数据库面板
+  - 做的很烂，但是能用
+  - 数据从 EhTagTranslation 项目获取
