@@ -923,11 +923,11 @@
         'food on body': {
             'male': '男体盛宴',
             'female': '女体盛宴'
-        }
+        },
         'netorase': {
             'male': '送夫',
             'female': '送妻'
-        }
+        },
         'swinging': {
             'male': '换夫',
             'female': '换妻'
