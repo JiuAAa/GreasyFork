@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ExHentai 标签提取器
 // @namespace    ExHentai-Tag-Extractor
-// @version      2.3
+// @version      2.5
 // @description  从 ExHentai/E-Hentai 提取标签，支持中文翻译和自定义翻译管理
 // @author       https://t.me/BGG_Comics
 // @homepage     https://t.me/BGG_Comics
