@@ -6,7 +6,7 @@
 // @author       https://t.me/BGG_Comics
 // @homepage     https://t.me/BGG_Comics
 // @supportURL   https://t.me/BGG_Comics
-// @license      MIT
+// @license GPL-3.0
 // @match        *://exhentai.org/g/*
 // @match        *://e-hentai.org/g/*
 // @icon         https://www.exhentai.org/favicon.ico
