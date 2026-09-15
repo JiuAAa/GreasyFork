@@ -13,3 +13,7 @@ EhSyringe
 EhTag数据库TXT导出工具
   - 导出 EhTagTranslation 项目的数据
   - 格式为TXT
+
+Eh中文标签提取工具
+  - ExHentai标签提取器 + EhTag中文提取 （字典 + 数据库）
+  - 数据库翻译由 EhTagTranslation 项目获取
