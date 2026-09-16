@@ -1098,7 +1098,8 @@
         if (category && dbTagMap) {
             const dbTranslation = getDbTagTranslation(category, tag);
             if (dbTranslation) {
-                return dbTranslation;
+                //检查是否有空格，有则替换为下划线
+                return dbTranslation.replace(/ /g, '_');
             }
         }
 
