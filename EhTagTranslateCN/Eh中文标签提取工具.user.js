@@ -927,6 +927,10 @@
         'swinging': {
             'male': '换夫',
             'female': '换妻'
+        },
+        'toddlercon': {
+            'male': '幼儿',
+            'female': '幼女'
         }
     };
 
