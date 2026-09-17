@@ -47,7 +47,6 @@
         'adventitious mouth': '畸位口',
         'adventitious penis': '畸位阴茎',
         'adventitious vagina': '畸位阴道',
-        'adventitious vagina': '畸位阴道',
         'afrikaans': '南非语',
         'afro': '爆炸头',
         'age progression': '年龄增长',
@@ -208,8 +207,8 @@
         'corpse': '尸体',
         'corruption': '堕落',
         'corset': '紧身胸衣',
+        'cosplay': 'Cosplay',
         'cosplaying': 'Cosplay',
-        'cousin': '表姐妹',
         'cow': '牛',
         'cowgirl': '牛女孩',
         'cowman': '牛男',
@@ -223,12 +222,10 @@
         'crying': '流泪',
         'cum bath': '精液浴',
         'cum in eye': '眼射',
-        'cum in eye': '眼射',
         'cum swap': '交换精液',
         'cumflation': '精液膨胀',
         'cunnilingus': '舔阴',
         'cuntboy': '人妖',
-        'cuntbusting': '阴道破坏',
         'cuntbusting': '阴道破坏',
         'czech': '捷克语',
         'dakimakura': '抱枕',
@@ -342,7 +339,7 @@
         'full tour': '消化道游览',
         'full-packaged futanari': '有蛋扶她',
         'fundoshi': '六尺褌',
-        'furry': '毛茸茸',
+        'furry': 'Furry',
         'futanari': '扶她',
         'futanarization': '扶她化',
         'gag': '口塞',
@@ -406,8 +403,8 @@
         'high heels': '高跟鞋',
         'hijab': '头巾',
         'hindi': '印地语',
-        'hippo boy': 'hippo boy',
-        'hippo girl': 'hippo girl',
+        'hippo boy': '河马男孩',
+        'hippo girl': '河马女孩',
         'hmong': '苗语',
         'hood': '帽兜',
         'horns': '角',
@@ -464,7 +461,6 @@
         'kunoichi': '女忍装',
         'kurdish': '库尔德语',
         'lab coat': '白大褂',
-        'lactation': '哺乳',
         'lactation': '母乳',
         'ladino': '犹太西班牙语',
         'lao': '老挝语',
@@ -509,7 +505,6 @@
         'menstruation': '经血',
         'mermaid': '美人鱼',
         'merman': '人鱼',
-        'mesugaki': '雌小鬼',
         'mesuiki': '干高潮',
         'metal armor': '金属盔甲',
         'midget': '侏儒',
@@ -550,7 +545,6 @@
         'multiple breasts': '多乳房',
         'multiple footjob': '多重足交',
         'multiple handjob': '多重手交',
-        'multiple nipples': '多乳头',
         'multiple nipples': '多乳头',
         'multiple orgasms': '连续高潮',
         'multiple pairings': '多对多',
@@ -613,7 +607,6 @@
         'otter boy': '水獭男孩',
         'otter girl': '水獭女孩',
         'out of order': '顺序错乱',
-        'oyakodon': '母女丼',
         'painted nails': '美甲',
         'paizuri': '乳交',
         'panda boy': '熊猫男',
@@ -653,7 +646,6 @@
         'policeman': '警服',
         'policewoman': '警服',
         'polish': '波兰语',
-        'ponygirl': '小马女',
         'ponygirl': '小马女',
         'ponytail': '马尾辫',
         'portuguese': '葡萄牙语',
@@ -724,7 +716,6 @@
         'sheep girl': '羊女孩',
         'shemale': '人妖',
         'shibari': '捆绑',
-        'shimaidon': '姐妹丼',
         'shimapan': '条纹胖次',
         'shona': '绍纳语',
         'shotacon': '正太',
@@ -826,7 +817,6 @@
         'tights': '厚连裤袜',
         'tigrinya': '提格雷尼亚语',
         'time stop': '时间停止',
-        'toddlercon': '幼女',
         'tomboy': '假小子',
         'tomgirl': '伪娘',
         'tooth brushing': '刷牙',
@@ -907,6 +897,14 @@
         'yuri': '百合',
         'zebra': '斑马',
         'zombie': '丧尸',
+        'asianporn': '亚洲色情',
+        'doujinshi': '同人志',
+        'gamecg': '游戏CG',
+        'imageset': '图集',
+        'knotted penis': '龟头球',
+        'manga': '漫画',
+        'misc': '杂项',
+        'private': '私有',
         'zulu': '祖鲁语'
     };
 
@@ -931,6 +929,24 @@
         'toddlercon': {
             'male': '幼儿',
             'female': '幼女'
+        },
+        'cousin': {
+            'male': '表兄弟',
+            'female': '表姐妹'
+        },
+        'mesugaki': {
+            'male': '雄小鬼',
+            'female': '雌小鬼'
+        },
+        'oyakodon': {
+            'male': '父子丼',
+            'female': '母女丼',
+            'mixed': '亲子丼'
+        },
+        'shimaidon': {
+            'male': '兄弟丼',
+            'female': '姐妹丼',
+            'mixed': '手足丼'
         }
     };
 
