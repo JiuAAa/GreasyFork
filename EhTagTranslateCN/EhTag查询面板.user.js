@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         EhTag查询面板
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  从Google Sheet获取标签数据，游戏风格菜单面板查询，支持缓存、存储、导入导出
-// @author       You
+// @version      1.0
+// @description  查询e站Tag
+// @author       https://t.me/BGG_Comics
 // @match        *://*/*
+// @license      GPL-3.0
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -128,7 +129,7 @@
             }
             parts.push(current.trim());
 
-            // 提取A列(英文)、B列(中文)、C列(描述)
+            // 提取表格A列(英文)、B列(中文)、C列(描述)
             if (parts.length >= 3) {
                 const tag = {
                     english: parts[0].replace(/^"|"$/g, ''),
@@ -147,7 +148,7 @@
     // ========== 数据管理模块 ==========
     const DataManager = {
         /**
-         * 从Google Sheet获取数据
+         * 获取数据
          */
         fetchData: async function() {
             return new Promise((resolve, reject) => {
@@ -250,7 +251,7 @@
                 /* ===== 启动按钮 ===== */
                 .tagPanel-launch-btn {
                     position: fixed;
-                    bottom: 20px;
+                    top: 50%;
                     right: 20px;
                     width: 60px;
                     height: 60px;
@@ -382,6 +383,7 @@
                     overflow-y: auto;
                     padding: 15px;
                     display: none;
+                    overflow-x: hidden;
                 }
 
                 .tagPanel-content.active {
@@ -419,7 +421,10 @@
                     overflow-y: auto;
                     display: flex;
                     flex-direction: column;
+                    overflow-x: hidden;
                     gap: 10px;
+                    padding-right: 12px;
+                    margin-top: 12px;
                 }
 
                 .tagPanel-tag-item {
@@ -462,6 +467,7 @@
                 .tagPanel-settings-group {
                     margin-bottom: 15px;
                     padding-bottom: 15px;
+                    overflow: hidden;
                     border-bottom: 1px solid #FFD700;
                 }
 
@@ -1036,7 +1042,7 @@
             DataManager.clearCache();
             this.allData = [];
             this.filteredData = [];
-            document.getElementById('tagPanel-tags-list').innerHTML = '<div class="tagPanel-message">缓存已清除，下次打开时重新加载</div>';
+            document.getElementById('tagPanel-tags-list').innerHTML = '<div class="tagPanel-message">缓存已清除</div>';
             this.showMessage('✅ 缓存已清除');
         },
 
@@ -1184,15 +1190,13 @@
             const infoDiv = document.getElementById('tagPanel-info');
             if (!infoDiv) return;
 
-            const cache = DataManager.getCache();
-            const cacheTime = cache ? new Date(cache.timestamp).toLocaleString('zh-CN') : '无';
             const dataCount = this.allData.length || '未加载';
 
             infoDiv.innerHTML = `
                 <p>📊 当前数据条数: <strong>${dataCount}</strong></p>
-                <p>⏰ 缓存时间: <strong>${cacheTime}</strong></p>
                 <p>🔑 快捷键: <strong>${getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY}</strong></p>
-                <p>✨ 脚本版本: <strong>2.0</strong></p>
+                <p>✨ 当前版本: <strong>1.0</strong></p>
+                <p>😍 作者频道: <a href="https://t.me/BGG_Comics" target="_blank"><strong>【BGG】本子！都是本子！❤️</strong></a></p>
             `;
         }
     };
