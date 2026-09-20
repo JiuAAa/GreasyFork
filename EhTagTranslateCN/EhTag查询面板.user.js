@@ -1,996 +1,1005 @@
 // ==UserScript==
-// @name         标签查询面板
+// @name         EhTag查询面板
 // @namespace    http://tampermonkey.net/
-// @version      0.1
-// @description  游戏菜单风格的标签查询面板
+// @version      2.0
+// @description  从Google Sheet获取标签数据，游戏风格菜单面板查询，支持缓存、存储、导入导出
 // @author       You
 // @match        *://*/*
+// @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
-// @run-at       document-end
+// @grant        GM_listValues
+// @grant        unsafeWindow
+// @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // ==================== 配置 ====================
+    // ========== 配置区 ==========
     const CONFIG = {
-        SPREADSHEET_ID: '10At5Ij9DdMsD0Zw7XGW96kgwhvSni4d9',
-        SHEET_GID: '1022287136',
-        DATA_START_ROW: 7, // 从第7行开始
-        CACHE_KEY: 'tagPanel_cache',
-        STORAGE_KEY: 'tagPanel_storage',
-        SHORTCUT_KEY: 'tagPanel_shortcut' // 快捷键配置
+        // Google Sheet CSV导出链接（改为你的ID）
+        SHEET_URL: 'https://docs.google.com/spreadsheets/d/10At5Ij9DdMsD0Zw7XGW96kgwhvSni4d9/export?format=csv&gid=1022287136',
+        // 缓存过期时间（毫秒）：24小时
+        CACHE_EXPIRY: 24 * 60 * 60 * 1000,
+        // 数据开始行号（从0计数，7代表第7行）
+        DATA_START_ROW: 6,
+        // 本地存储前缀
+        STORAGE_PREFIX: 'tagPanel_',
+        // 默认快捷键
+        DEFAULT_HOTKEY: 'ctrl+shift+e'
     };
 
-    // ==================== HTML 结构 ====================
-    function createPanelHTML() {
-        const html = `
-            <div id="tagPanel-container" class="tagPanel-container">
-                <!-- 启动按钮 -->
-                <button id="tagPanel-launch-btn" class="tagPanel-launch-btn" title="打开标签查询面板 (快捷键: Alt+T)">
-                    📋
-                </button>
+    // ========== 工具函数 ==========
 
-                <!-- 主面板 -->
-                <div id="tagPanel-main" class="tagPanel-main" style="display: none;">
-                    <div class="tagPanel-header">
-                        <div class="tagPanel-title">标签查询</div>
-                        <button id="tagPanel-close-btn" class="tagPanel-close-btn">✕</button>
-                    </div>
-
-                    <!-- 标签页/菜单 -->
-                    <div class="tagPanel-tabs">
-                        <button class="tagPanel-tab active" data-tab="search">查询</button>
-                        <button class="tagPanel-tab" data-tab="settings">设置</button>
-                    </div>
-
-                    <!-- 查询标签页 -->
-                    <div id="tagPanel-search-tab" class="tagPanel-tab-content active">
-                        <input 
-                            type="text" 
-                            id="tagPanel-search-input" 
-                            class="tagPanel-search-input" 
-                            placeholder="搜索标签（英文/中文）"
-                        >
-                        <div id="tagPanel-tags-list" class="tagPanel-tags-list"></div>
-                    </div>
-
-                    <!-- 设置标签页 -->
-                    <div id="tagPanel-settings-tab" class="tagPanel-tab-content" style="display: none;">
-                        <div class="tagPanel-settings-group">
-                            <h3>数据管理</h3>
-                            <button id="tagPanel-refresh-cache-btn" class="tagPanel-setting-btn">刷新缓存</button>
-                            <button id="tagPanel-clear-cache-btn" class="tagPanel-setting-btn">清除缓存</button>
-                            <button id="tagPanel-export-btn" class="tagPanel-setting-btn">导出数据</button>
-                            <button id="tagPanel-import-btn" class="tagPanel-setting-btn">导入数据</button>
-                        </div>
-
-                        <div class="tagPanel-settings-group">
-                            <h3>本地存储</h3>
-                            <button id="tagPanel-save-storage-btn" class="tagPanel-setting-btn">保存当前</button>
-                            <button id="tagPanel-load-storage-btn" class="tagPanel-setting-btn">加载存储</button>
-                            <button id="tagPanel-clear-storage-btn" class="tagPanel-setting-btn">清除存储</button>
-                        </div>
-
-                        <div class="tagPanel-settings-group">
-                            <h3>界面设置</h3>
-                            <label class="tagPanel-setting-label">
-                                <input type="checkbox" id="tagPanel-hide-btn-checkbox">
-                                隐藏启动按钮
-                            </label>
-                            <div>
-                                <label>快捷键设置：</label>
-                                <input 
-                                    type="text" 
-                                    id="tagPanel-shortcut-input" 
-                                    class="tagPanel-shortcut-input" 
-                                    placeholder="例如: Alt+T, Ctrl+Shift+K"
-                                    maxlength="20"
-                                >
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        return html;
+    /**
+     * HTML转义，防止XSS
+     */
+    function escapeHtml(text) {
+        if (!text) return '';
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
     }
 
-    // ==================== 初始化 ====================
-    function init() {
-        // 注入HTML
-        const container = document.createElement('div');
-        container.innerHTML = createPanelHTML();
-        document.body.appendChild(container);
+    /**
+     * 模糊匹配搜索（支持中英文）
+     */
+    function fuzzyMatch(query, text) {
+        if (!query || !text) return false;
+        const q = query.toLowerCase();
+        const t = text.toLowerCase();
 
-        console.log('标签查询面板已初始化');
-    }
+        // 完全匹配或包含匹配
+        if (t === q || t.includes(q)) return true;
 
-    // 页面加载完成后初始化
-    window.addEventListener('load', init);
-})();
-
-<style id="tagPanel-styles">
-    /* ==================== 容器 ==================== */
-    .tagPanel-container {
-        font-family: "Microsoft YaHei", Arial, sans-serif;
-        font-size: 14px;
-        z-index: 999999;
-    }
-
-    /* ==================== 启动按钮 ==================== */
-    .tagPanel-launch-btn {
-        position: fixed;
-        bottom: 30px;
-        right: 30px;
-        width: 60px;
-        height: 60px;
-        border-radius: 50%;
-        border: 3px solid #FFD700;
-        background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-        color: #FFD700;
-        font-size: 28px;
-        cursor: pointer;
-        box-shadow: 0 0 20px rgba(255, 215, 0, 0.5), inset 0 0 10px rgba(0, 0, 0, 0.5);
-        transition: all 0.3s ease;
-        z-index: 999998;
-    }
-
-    .tagPanel-launch-btn:hover {
-        transform: scale(1.1);
-        box-shadow: 0 0 30px rgba(255, 215, 0, 0.8), inset 0 0 10px rgba(0, 0, 0, 0.5);
-    }
-
-    .tagPanel-launch-btn:active {
-        transform: scale(0.95);
-    }
-
-    .tagPanel-launch-btn.hidden {
-        display: none;
-    }
-
-    /* ==================== 主面板 ==================== */
-    .tagPanel-main {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 500px;
-        max-height: 600px;
-        background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-        border: 3px solid #FFD700;
-        border-radius: 10px;
-        box-shadow: 
-            0 0 50px rgba(255, 215, 0, 0.3),
-            inset 0 0 20px rgba(255, 215, 0, 0.1),
-            0 10px 40px rgba(0, 0, 0, 0.8);
-        display: flex;
-        flex-direction: column;
-        animation: slideIn 0.3s ease;
-        z-index: 999997;
-    }
-
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translate(-50%, -48%);
+        // 逐字符匹配（模糊搜索）
+        let qIndex = 0;
+        for (let i = 0; i < t.length && qIndex < q.length; i++) {
+            if (t[i] === q[qIndex]) qIndex++;
         }
-        to {
-            opacity: 1;
-            transform: translate(-50%, -50%);
-        }
+        return qIndex === q.length;
     }
 
-    /* ==================== 标题栏 ==================== */
-    .tagPanel-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 15px 20px;
-        border-bottom: 2px solid #FFD700;
-        background: rgba(0, 0, 0, 0.3);
-    }
-
-    .tagPanel-title {
-        color: #FFD700;
-        font-size: 18px;
-        font-weight: bold;
-        text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-    }
-
-    .tagPanel-close-btn {
-        width: 30px;
-        height: 30px;
-        border: 1px solid #FFD700;
-        background: rgba(255, 215, 0, 0.1);
-        color: #FFD700;
-        font-size: 20px;
-        cursor: pointer;
-        border-radius: 4px;
-        transition: all 0.2s ease;
-    }
-
-    .tagPanel-close-btn:hover {
-        background: rgba(255, 215, 0, 0.3);
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-    }
-
-    /* ==================== 标签页 ==================== */
-    .tagPanel-tabs {
-        display: flex;
-        border-bottom: 1px solid rgba(255, 215, 0, 0.3);
-        background: rgba(0, 0, 0, 0.2);
-    }
-
-    .tagPanel-tab {
-        flex: 1;
-        padding: 12px;
-        border: none;
-        background: transparent;
-        color: #AAA;
-        font-size: 14px;
-        font-weight: bold;
-        cursor: pointer;
-        border-bottom: 3px solid transparent;
-        transition: all 0.3s ease;
-    }
-
-    .tagPanel-tab:hover {
-        color: #FFD700;
-        background: rgba(255, 215, 0, 0.05);
-    }
-
-    .tagPanel-tab.active {
-        color: #FFD700;
-        border-bottom-color: #FFD700;
-        box-shadow: inset 0 -5px 15px rgba(255, 215, 0, 0.1);
-    }
-
-    /* ==================== 标签页内容 ==================== */
-    .tagPanel-tab-content {
-        flex: 1;
-        padding: 15px;
-        overflow-y: auto;
-        display: none;
-    }
-
-    .tagPanel-tab-content.active {
-        display: block;
-    }
-
-    /* ==================== 搜索框 ==================== */
-    .tagPanel-search-input {
-        width: 100%;
-        padding: 10px 12px;
-        margin-bottom: 15px;
-        background: rgba(255, 215, 0, 0.05);
-        border: 2px solid #FFD700;
-        border-radius: 4px;
-        color: #FFF;
-        font-size: 14px;
-        box-sizing: border-box;
-        transition: all 0.2s ease;
-    }
-
-    .tagPanel-search-input::placeholder {
-        color: #888;
-    }
-
-    .tagPanel-search-input:focus {
-        outline: none;
-        background: rgba(255, 215, 0, 0.1);
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
-    }
-
-    /* ==================== 标签列表 ==================== */
-    .tagPanel-tags-list {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        max-height: 450px;
-        overflow-y: auto;
-    }
-
-    .tagPanel-tag-item {
-        background: rgba(255, 215, 0, 0.05);
-        border: 1px solid rgba(255, 215, 0, 0.3);
-        border-radius: 4px;
-        padding: 12px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    .tagPanel-tag-item:hover {
-        background: rgba(255, 215, 0, 0.15);
-        border-color: #FFD700;
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.2);
-        transform: translateX(5px);
-    }
-
-    .tagPanel-tag-name {
-        color: #FFD700;
-        font-weight: bold;
-        margin-bottom: 5px;
-        font-size: 13px;
-    }
-
-    .tagPanel-tag-chinese {
-        color: #87CEEB;
-        font-size: 12px;
-        margin-bottom: 5px;
-    }
-
-    .tagPanel-tag-desc {
-        color: #CCC;
-        font-size: 12px;
-        line-height: 1.5;
-    }
-
-    /* ==================== 设置菜单 ==================== */
-    .tagPanel-settings-group {
-        margin-bottom: 20px;
-        padding-bottom: 15px;
-        border-bottom: 1px solid rgba(255, 215, 0, 0.2);
-    }
-
-    .tagPanel-settings-group:last-child {
-        border-bottom: none;
-    }
-
-    .tagPanel-settings-group h3 {
-        color: #FFD700;
-        font-size: 14px;
-        margin: 0 0 12px 0;
-        text-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
-    }
-
-    .tagPanel-setting-btn {
-        display: block;
-        width: 100%;
-        padding: 10px;
-        margin-bottom: 8px;
-        background: linear-gradient(135deg, rgba(255, 215, 0, 0.1) 0%, rgba(255, 215, 0, 0.05) 100%);
-        border: 1px solid #FFD700;
-        border-radius: 4px;
-        color: #FFD700;
-        font-size: 12px;
-        font-weight: bold;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    .tagPanel-setting-btn:hover {
-        background: linear-gradient(135deg, rgba(255, 215, 0, 0.2) 0%, rgba(255, 215, 0, 0.1) 100%);
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
-        transform: translateY(-2px);
-    }
-
-    .tagPanel-setting-btn:active {
-        transform: translateY(0);
-    }
-
-    /* ==================== 设置标签 ==================== */
-    .tagPanel-setting-label {
-        display: flex;
-        align-items: center;
-        color: #CCC;
-        font-size: 12px;
-        margin-bottom: 10px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    .tagPanel-setting-label:hover {
-        color: #FFD700;
-    }
-
-    .tagPanel-setting-label input[type="checkbox"] {
-        width: 18px;
-        height: 18px;
-        margin-right: 8px;
-        cursor: pointer;
-        accent-color: #FFD700;
-    }
-
-    /* ==================== 快捷键输入 ==================== */
-    .tagPanel-shortcut-input {
-        width: 100%;
-        padding: 8px 10px;
-        margin-top: 8px;
-        background: rgba(255, 215, 0, 0.05);
-        border: 1px solid #FFD700;
-        border-radius: 4px;
-        color: #FFF;
-        font-size: 12px;
-        box-sizing: border-box;
-        transition: all 0.2s ease;
-    }
-
-    .tagPanel-shortcut-input:focus {
-        outline: none;
-        background: rgba(255, 215, 0, 0.1);
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
-    }
-
-    /* ==================== 滚动条美化 ==================== */
-    .tagPanel-tags-list::-webkit-scrollbar,
-    .tagPanel-tab-content::-webkit-scrollbar {
-        width: 6px;
-    }
-
-    .tagPanel-tags-list::-webkit-scrollbar-track,
-    .tagPanel-tab-content::-webkit-scrollbar-track {
-        background: rgba(255, 215, 0, 0.05);
-        border-radius: 3px;
-    }
-
-    .tagPanel-tags-list::-webkit-scrollbar-thumb,
-    .tagPanel-tab-content::-webkit-scrollbar-thumb {
-        background: rgba(255, 215, 0, 0.3);
-        border-radius: 3px;
-    }
-
-    .tagPanel-tags-list::-webkit-scrollbar-thumb:hover,
-    .tagPanel-tab-content::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 215, 0, 0.5);
-    }
-</style>
-
-// ==================== 数据管理 ====================
-class DataManager {
-    constructor(config) {
-        this.config = config;
-        this.data = [];
-    }
-
-    // 从Google Sheets获取数据
-    async fetchFromSpreadsheet() {
+    /**
+     * 获取本地存储的值
+     */
+    function getStorage(key) {
         try {
-            const url = `https://sheets.googleapis.com/v4/spreadsheets/${this.config.SPREADSHEET_ID}/values/Sheet1?key=AIzaSyDummyKeyForDemo`;
-            
-            // 注意：这里使用的是公开API，如果需要实际使用，需要设置Google API密钥
-            // 或者使用CSV导出链接
-            const csvUrl = `https://docs.google.com/spreadsheets/d/${this.config.SPREADSHEET_ID}/export?format=csv&gid=${this.config.SHEET_GID}`;
-            
-            const response = await fetch(csvUrl);
-            const csv = await response.text();
-            this.parseCSV(csv);
-            
-            return this.data;
-        } catch (error) {
-            console.error('获取数据失败:', error);
-            // 如果获取失败，尝试从缓存读取
-            const cached = this.loadCache();
-            if (cached.length > 0) {
-                this.data = cached;
-                console.log('已从缓存加载数据');
-                return this.data;
-            }
-            return [];
+            return JSON.parse(GM_getValue(CONFIG.STORAGE_PREFIX + key, 'null'));
+        } catch (e) {
+            return null;
         }
     }
 
-    // 解析CSV数据
-    parseCSV(csv) {
-        const lines = csv.split('\n');
-        this.data = [];
-        
-        // 从第7行开始（索引6），只取前三列 A、B、C
-        for (let i = this.config.DATA_START_ROW - 1; i < lines.length; i++) {
+    /**
+     * 保存到本地存储
+     */
+    function setStorage(key, value) {
+        GM_setValue(CONFIG.STORAGE_PREFIX + key, JSON.stringify(value));
+    }
+
+    /**
+     * 删除本地存储
+     */
+    function deleteStorage(key) {
+        GM_deleteValue(CONFIG.STORAGE_PREFIX + key);
+    }
+
+    /**
+     * 解析CSV数据（简单版）
+     */
+    function parseCSV(csvText) {
+        const lines = csvText.split('\n');
+        const data = [];
+
+        for (let i = CONFIG.DATA_START_ROW; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) continue;
-            
-            // 简单的CSV解析（处理基础情况）
-            const parts = this.parseCSVLine(line);
+
+            // 简单CSV解析（处理双引号和逗号）
+            const parts = [];
+            let current = '';
+            let inQuotes = false;
+
+            for (let j = 0; j < line.length; j++) {
+                const char = line[j];
+                const nextChar = line[j + 1];
+
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        current += '"';
+                        j++;
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (char === ',' && !inQuotes) {
+                    parts.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            parts.push(current.trim());
+
+            // 提取A列(英文)、B列(中文)、C列(描述)
             if (parts.length >= 3) {
-                this.data.push({
-                    english: parts[0].trim(),
-                    chinese: parts[1].trim(),
-                    description: parts[2].trim()
+                const tag = {
+                    english: parts[0].replace(/^"|"$/g, ''),
+                    chinese: parts[1].replace(/^"|"$/g, ''),
+                    description: parts[2].replace(/^"|"$/g, '')
+                };
+                if (tag.english || tag.chinese) {
+                    data.push(tag);
+                }
+            }
+        }
+
+        return data;
+    }
+
+    // ========== 数据管理模块 ==========
+    const DataManager = {
+        /**
+         * 从Google Sheet获取数据
+         */
+        fetchData: async function() {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: CONFIG.SHEET_URL,
+                    onload: function(response) {
+                        if (response.status === 200) {
+                            const data = parseCSV(response.responseText);
+                            resolve(data);
+                        } else {
+                            reject(new Error('获取数据失败: ' + response.status));
+                        }
+                    },
+                    onerror: function(error) {
+                        reject(new Error('网络错误: ' + error));
+                    }
                 });
+            });
+        },
+
+        /**
+         * 获取缓存的数据
+         */
+        getCache: function() {
+            const cache = getStorage('cache');
+            if (!cache) return null;
+
+            // 检查缓存是否过期
+            if (Date.now() - cache.timestamp > CONFIG.CACHE_EXPIRY) {
+                this.clearCache();
+                return null;
             }
-        }
-        
-        // 保存到缓存
-        this.saveCache();
-        console.log(`已加载 ${this.data.length} 条数据`);
-    }
 
-    // CSV行解析（处理引号）
-    parseCSVLine(line) {
-        const result = [];
-        let current = '';
-        let inQuotes = false;
-        
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            
-            if (char === '"') {
-                inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-                result.push(current);
-                current = '';
-            } else {
-                current += char;
+            return cache.data;
+        },
+
+        /**
+         * 保存数据到缓存
+         */
+        setCache: function(data) {
+            setStorage('cache', {
+                data: data,
+                timestamp: Date.now()
+            });
+        },
+
+        /**
+         * 清除缓存
+         */
+        clearCache: function() {
+            deleteStorage('cache');
+        },
+
+        /**
+         * 智能加载数据（优先使用缓存）
+         */
+        loadData: async function() {
+            // 先尝试获取缓存
+            let data = this.getCache();
+            if (data && data.length > 0) {
+                console.log('使用缓存数据');
+                return data;
             }
+
+            // 缓存不存在，从网络获取
+            console.log('从网络获取数据...');
+            data = await this.fetchData();
+            this.setCache(data);
+            return data;
         }
-        
-        result.push(current);
-        return result;
-    }
+    };
 
-    // 保存缓存
-    saveCache() {
-        GM_setValue(this.config.CACHE_KEY, JSON.stringify(this.data));
-    }
+    // ========== UI管理模块 ==========
+    const UIManager = {
+        isVisible: true,
+        currentTab: 'search',
+        allData: [],
+        filteredData: [],
 
-    // 加载缓存
-    loadCache() {
-        const cached = GM_getValue(this.config.CACHE_KEY, '[]');
-        return JSON.parse(cached);
-    }
+        /**
+         * 初始化UI界面
+         */
+        init: function() {
+            this.createStyles();
+            this.createPanel();
+            this.bindEvents();
+            console.log('UI初始化完成');
+        },
 
-    // 清除缓存
-    clearCache() {
-        GM_deleteValue(this.config.CACHE_KEY);
-        this.data = [];
-    }
+        /**
+         * 创建样式
+         */
+        createStyles: function() {
+            if (document.getElementById('tagPanel-styles')) return;
 
-    // 搜索数据
-    search(keyword) {
-        if (!keyword) return this.data;
-        
-        const lowerKeyword = keyword.toLowerCase();
-        return this.data.filter(item => 
-            item.english.toLowerCase().includes(lowerKeyword) ||
-            item.chinese.toLowerCase().includes(lowerKeyword) ||
-            item.description.toLowerCase().includes(lowerKeyword)
-        );
-    }
-
-    // 获取所有数据
-    getAll() {
-        return this.data;
-    }
-}
-
-// ==================== UI管理 ====================
-class UIManager {
-    constructor() {
-        this.dataManager = null;
-        this.currentData = [];
-        this.launchBtn = null;
-        this.mainPanel = null;
-        this.isVisible = false;
-    }
-
-    // 初始化UI管理器
-    init(dataManager) {
-        this.dataManager = dataManager;
-        this.setupElements();
-        this.setupEventListeners();
-        this.restoreSettings();
-    }
-
-    // 获取DOM元素
-    setupElements() {
-        this.launchBtn = document.getElementById('tagPanel-launch-btn');
-        this.mainPanel = document.getElementById('tagPanel-main');
-        this.searchInput = document.getElementById('tagPanel-search-input');
-        this.tagsList = document.getElementById('tagPanel-tags-list');
-        this.closeBtn = document.getElementById('tagPanel-close-btn');
-        this.tabs = document.querySelectorAll('.tagPanel-tab');
-        this.tabContents = document.querySelectorAll('.tagPanel-tab-content');
-    }
-
-    // 设置事件监听
-    setupEventListeners() {
-        // 启动按钮
-        this.launchBtn.addEventListener('click', () => this.togglePanel());
-
-        // 关闭按钮
-        this.closeBtn.addEventListener('click', () => this.hidePanel());
-
-        // 搜索框
-        this.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
-
-        // 标签页切换
-        this.tabs.forEach(tab => {
-            tab.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
-        });
-
-        // 快捷键监听
-        document.addEventListener('keydown', (e) => this.handleShortcut(e));
-
-        // 页面失焦时关闭面板
-        document.addEventListener('click', (e) => {
-            if (!this.mainPanel.contains(e.target) && e.target !== this.launchBtn) {
-                if (this.isVisible) {
-                    this.hidePanel();
+            const style = document.createElement('style');
+            style.id = 'tagPanel-styles';
+            style.textContent = `
+                /* ===== 启动按钮 ===== */
+                .tagPanel-launch-btn {
+                    position: fixed;
+                    bottom: 20px;
+                    right: 20px;
+                    width: 60px;
+                    height: 60px;
+                    border-radius: 50%;
+                    background: linear-gradient(135deg, #FFD700, #FFA500);
+                    border: 3px solid #FFD700;
+                    color: #000;
+                    font-weight: bold;
+                    font-size: 24px;
+                    cursor: pointer;
+                    z-index: 9998;
+                    box-shadow: 0 0 20px rgba(255, 215, 0, 0.8),
+                                0 0 40px rgba(255, 165, 0, 0.4);
+                    transition: all 0.3s ease;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
                 }
-            }
-        });
-    }
 
-    // 切换面板显示/隐藏
-    togglePanel() {
-        if (this.isVisible) {
-            this.hidePanel();
-        } else {
-            this.showPanel();
-        }
-    }
+                .tagPanel-launch-btn:hover {
+                    transform: scale(1.1);
+                    box-shadow: 0 0 30px rgba(255, 215, 0, 1),
+                                0 0 60px rgba(255, 165, 0, 0.6);
+                }
 
-    // 显示面板
-    async showPanel() {
-        // 如果数据为空，先加载数据
-        if (this.dataManager.data.length === 0) {
-            console.log('加载数据中...');
-            await this.dataManager.fetchFromSpreadsheet();
-        }
+                .tagPanel-launch-btn:active {
+                    transform: scale(0.95);
+                }
 
-        this.currentData = this.dataManager.getAll();
-        this.renderTagsList(this.currentData);
-        this.mainPanel.style.display = 'flex';
-        this.isVisible = true;
-        this.searchInput.focus();
-    }
+                /* ===== 主面板容器 ===== */
+                .tagPanel-container {
+                    position: fixed;
+                    bottom: 100px;
+                    right: 20px;
+                    width: 500px;
+                    max-height: 600px;
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    border: 2px solid #FFD700;
+                    border-radius: 10px;
+                    box-shadow: 0 0 30px rgba(255, 215, 0, 0.5),
+                                0 0 60px rgba(0, 0, 0, 0.8),
+                                inset 0 0 20px rgba(255, 215, 0, 0.1);
+                    color: #e0e0e0;
+                    font-family: 'Arial', 'Microsoft YaHei', sans-serif;
+                    z-index: 9999;
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                    animation: panelSlideIn 0.3s ease;
+                }
 
-    // 隐藏面板
-    hidePanel() {
-        this.mainPanel.style.display = 'none';
-        this.isVisible = false;
-    }
+                @keyframes panelSlideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
 
-    // 搜索处理
-    handleSearch(keyword) {
-        const results = this.dataManager.search(keyword);
-        this.currentData = results;
-        this.renderTagsList(results);
-    }
+                /* ===== 标题栏 ===== */
+                .tagPanel-header {
+                    background: linear-gradient(90deg, #0f3460 0%, #16213e 100%);
+                    border-bottom: 2px solid #FFD700;
+                    padding: 15px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    flex-shrink: 0;
+                }
 
-    // 渲染标签列表
-    renderTagsList(items) {
-        this.tagsList.innerHTML = '';
+                .tagPanel-title {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #FFD700;
+                    text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+                    margin: 0;
+                }
 
-        if (items.length === 0) {
-            this.tagsList.innerHTML = '<div style="color: #AAA; padding: 20px; text-align: center;">未找到匹配的标签</div>';
-            return;
-        }
+                .tagPanel-close-btn {
+                    background: none;
+                    border: none;
+                    color: #FFD700;
+                    font-size: 24px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
 
-        items.forEach(item => {
-            const tagElement = document.createElement('div');
-            tagElement.className = 'tagPanel-tag-item';
-            tagElement.innerHTML = `
-                <div class="tagPanel-tag-name">${this.escapeHtml(item.english)}</div>
-                <div class="tagPanel-tag-chinese">${this.escapeHtml(item.chinese)}</div>
-                <div class="tagPanel-tag-desc">${this.escapeHtml(item.description)}</div>
+                .tagPanel-close-btn:hover {
+                    transform: scale(1.2);
+                    text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+                }
+
+                /* ===== 标签页 ===== */
+                .tagPanel-tabs {
+                    display: flex;
+                    background: #0f3460;
+                    border-bottom: 1px solid #FFD700;
+                    flex-shrink: 0;
+                }
+
+                .tagPanel-tab {
+                    flex: 1;
+                    padding: 10px;
+                    background: none;
+                    border: none;
+                    color: #a0a0a0;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    font-weight: bold;
+                    border-bottom: 3px solid transparent;
+                }
+
+                .tagPanel-tab.active {
+                    color: #FFD700;
+                    border-bottom-color: #FFD700;
+                    box-shadow: inset 0 -5px 15px rgba(255, 215, 0, 0.2);
+                }
+
+                .tagPanel-tab:hover {
+                    color: #FFD700;
+                }
+
+                /* ===== 内容区 ===== */
+                .tagPanel-content {
+                    flex: 1;
+                    overflow-y: auto;
+                    padding: 15px;
+                    display: none;
+                }
+
+                .tagPanel-content.active {
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                /* ===== 搜索框 ===== */
+                .tagPanel-search-input {
+                    width: 100%;
+                    padding: 10px;
+                    background: #0f3460;
+                    border: 1px solid #FFD700;
+                    border-radius: 5px;
+                    color: #e0e0e0;
+                    margin-bottom: 15px;
+                    box-sizing: border-box;
+                    font-size: 14px;
+                }
+
+                .tagPanel-search-input::placeholder {
+                    color: #666;
+                }
+
+                .tagPanel-search-input:focus {
+                    outline: none;
+                    background: #0f3460;
+                    box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+                    border-color: #FFD700;
+                }
+
+                /* ===== 标签列表 ===== */
+                .tagPanel-tags-list {
+                    flex: 1;
+                    overflow-y: auto;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
+                }
+
+                .tagPanel-tag-item {
+                    background: linear-gradient(135deg, #0f3460, #1a1a2e);
+                    border: 1px solid #FFD700;
+                    border-radius: 5px;
+                    padding: 10px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    border-left: 4px solid transparent;
+                }
+
+                .tagPanel-tag-item:hover {
+                    background: linear-gradient(135deg, #16213e, #0f3460);
+                    border-left-color: #FFD700;
+                    box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+                    transform: translateX(5px);
+                }
+
+                .tagPanel-tag-english {
+                    color: #FFD700;
+                    font-weight: bold;
+                    font-size: 14px;
+                }
+
+                .tagPanel-tag-chinese {
+                    color: #e0e0e0;
+                    font-size: 13px;
+                    margin-top: 5px;
+                }
+
+                .tagPanel-tag-description {
+                    color: #a0a0a0;
+                    font-size: 12px;
+                    margin-top: 5px;
+                    font-style: italic;
+                }
+
+                /* ===== 设置组 ===== */
+                .tagPanel-settings-group {
+                    margin-bottom: 15px;
+                    padding-bottom: 15px;
+                    border-bottom: 1px solid #FFD700;
+                }
+
+                .tagPanel-settings-group:last-child {
+                    border-bottom: none;
+                }
+
+                .tagPanel-settings-label {
+                    color: #FFD700;
+                    font-weight: bold;
+                    font-size: 14px;
+                    margin-bottom: 10px;
+                    display: block;
+                }
+
+                .tagPanel-settings-btn {
+                    background: linear-gradient(135deg, #FFD700, #FFA500);
+                    border: 1px solid #FFD700;
+                    color: #000;
+                    padding: 8px 12px;
+                    margin-right: 8px;
+                    margin-bottom: 5px;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-weight: bold;
+                    transition: all 0.2s;
+                    font-size: 12px;
+                }
+
+                .tagPanel-settings-btn:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+                }
+
+                .tagPanel-settings-btn:active {
+                    transform: translateY(0);
+                }
+
+                .tagPanel-settings-btn.secondary {
+                    background: #0f3460;
+                    color: #FFD700;
+                    border: 1px solid #FFD700;
+                }
+
+                .tagPanel-settings-btn.secondary:hover {
+                    background: #16213e;
+                }
+
+                /* ===== 文件输入 ===== */
+                .tagPanel-file-input {
+                    display: none;
+                }
+
+                /* ===== 消息提示 ===== */
+                .tagPanel-message {
+                    background: rgba(255, 215, 0, 0.1);
+                    border: 1px solid #FFD700;
+                    color: #FFD700;
+                    padding: 10px;
+                    border-radius: 5px;
+                    margin-bottom: 10px;
+                    font-size: 12px;
+                    text-align: center;
+                    animation: messageSlideIn 0.3s ease;
+                }
+
+                @keyframes messageSlideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateY(-10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+
+                /* ===== 滚动条美化 ===== */
+                .tagPanel-tags-list::-webkit-scrollbar,
+                .tagPanel-content::-webkit-scrollbar {
+                    width: 8px;
+                }
+
+                .tagPanel-tags-list::-webkit-scrollbar-track,
+                .tagPanel-content::-webkit-scrollbar-track {
+                    background: #0f3460;
+                }
+
+                .tagPanel-tags-list::-webkit-scrollbar-thumb,
+                .tagPanel-content::-webkit-scrollbar-thumb {
+                    background: #FFD700;
+                    border-radius: 4px;
+                }
+
+                .tagPanel-tags-list::-webkit-scrollbar-thumb:hover,
+                .tagPanel-content::-webkit-scrollbar-thumb:hover {
+                    background: #FFA500;
+                }
+
+                /* ===== 快捷键输入框 ===== */
+                .tagPanel-hotkey-input {
+                    width: 100%;
+                    padding: 8px;
+                    background: #0f3460;
+                    border: 1px solid #FFD700;
+                    border-radius: 5px;
+                    color: #FFD700;
+                    margin-top: 5px;
+                    box-sizing: border-box;
+                }
+
+                .tagPanel-hotkey-input:focus {
+                    outline: none;
+                    box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+                }
+
+                /* ===== 数据集列表 ===== */
+                .tagPanel-dataset-item {
+                    background: #0f3460;
+                    border: 1px solid #FFD700;
+                    padding: 10px;
+                    border-radius: 5px;
+                    margin-bottom: 8px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+
+                .tagPanel-dataset-name {
+                    color: #FFD700;
+                    font-weight: bold;
+                    flex: 1;
+                }
+
+                .tagPanel-dataset-delete-btn {
+                    background: #8b0000;
+                    color: #fff;
+                    border: none;
+                    padding: 5px 10px;
+                    border-radius: 3px;
+                    cursor: pointer;
+                    font-size: 12px;
+                }
+
+                .tagPanel-dataset-delete-btn:hover {
+                    background: #a00000;
+                }
             `;
-            this.tagsList.appendChild(tagElement);
-        });
-    }
+            document.head.appendChild(style);
+        },
 
-    // 标签页切换
-    switchTab(tabName) {
-        // 更新标签页状态
-        this.tabs.forEach(tab => {
-            tab.classList.remove('active');
-            if (tab.dataset.tab === tabName) {
-                tab.classList.add('active');
-            }
-        });
+        /**
+         * 创建主面板HTML
+         */
+        createPanel: function() {
+            if (document.querySelector('.tagPanel-container')) return;
 
-        // 更新内容显示
-        this.tabContents.forEach(content => {
-            content.classList.remove('active');
-            if (content.id === `tagPanel-${tabName}-tab`) {
-                content.classList.add('active');
-            }
-        });
-    }
+            // 创建启动按钮
+            const launchBtn = document.createElement('button');
+            launchBtn.className = 'tagPanel-launch-btn';
+            launchBtn.id = 'tagPanel-launch-btn';
+            launchBtn.textContent = '🏷️';
+            launchBtn.title = '点击打开标签查询面板 (快捷键: ' + (getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY) + ')';
+            document.body.appendChild(launchBtn);
 
-    // 快捷键处理
-    handleShortcut(e) {
-        const shortcutKey = GM_getValue('tagPanel_shortcut_key', 'Alt+T');
-        
-        if (this.matchesShortcut(e, shortcutKey)) {
-            e.preventDefault();
-            this.togglePanel();
-        }
-    }
+            // 创建主面板
+            const container = document.createElement('div');
+            container.className = 'tagPanel-container';
+            container.id = 'tagPanel-container';
 
-    // 检查是否匹配快捷键
-    matchesShortcut(e, shortcut) {
-        const parts = shortcut.split('+').map(p => p.trim().toLowerCase());
-        
-        const hasCtrl = parts.includes('ctrl') && e.ctrlKey;
-        const hasAlt = parts.includes('alt') && e.altKey;
-        const hasShift = parts.includes('shift') && e.shiftKey;
-        
-        let keyMatch = false;
-        for (let part of parts) {
-            if (!['ctrl', 'alt', 'shift'].includes(part)) {
-                keyMatch = e.key.toLowerCase() === part || e.code.toLowerCase() === `key${part}`;
-                break;
-            }
-        }
+            container.innerHTML = `
+                <!-- 标题栏 -->
+                <div class="tagPanel-header">
+                    <h2 class="tagPanel-title">📚 标签查询面板</h2>
+                    <button class="tagPanel-close-btn" id="tagPanel-close-btn">✕</button>
+                </div>
 
-        return keyMatch && ((parts.includes('ctrl') ? hasCtrl : true)) && 
-               ((parts.includes('alt') ? hasAlt : true)) && 
-               ((parts.includes('shift') ? hasShift : true));
-    }
+                <!-- 标签页切换 -->
+                <div class="tagPanel-tabs">
+                    <button class="tagPanel-tab active" data-tab="search">🔍 查询</button>
+                    <button class="tagPanel-tab" data-tab="storage">💾 存储</button>
+                    <button class="tagPanel-tab" data-tab="settings">⚙️ 设置</button>
+                </div>
 
-    // 恢复设置
-    restoreSettings() {
-        const hideBtn = GM_getValue('tagPanel_hide_btn', false);
-        if (hideBtn) {
-            this.launchBtn.classList.add('hidden');
-        }
-    }
+                <!-- 查询标签页 -->
+                <div class="tagPanel-content active" data-tab="search">
+                    <input type="text" class="tagPanel-search-input" id="tagPanel-search" placeholder="搜索英文/中文/描述...">
+                    <div class="tagPanel-tags-list" id="tagPanel-tags-list"></div>
+                </div>
 
-    // HTML转义（防止XSS）
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-}
+                <!-- 存储标签页 -->
+                <div class="tagPanel-content" data-tab="storage">
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">📥 导入数据</label>
+                        <button class="tagPanel-settings-btn" id="tagPanel-import-json-btn">导入 JSON</button>
+                        <button class="tagPanel-settings-btn" id="tagPanel-import-csv-btn">导入 CSV</button>
+                        <input type="file" id="tagPanel-file-input" class="tagPanel-file-input" accept=".json,.csv">
+                    </div>
 
-// ==================== 初始化脚本 ====================
-(function() {
-    'use strict';
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">📤 导出数据</label>
+                        <button class="tagPanel-settings-btn" id="tagPanel-export-json-btn">导出 JSON</button>
+                        <button class="tagPanel-settings-btn" id="tagPanel-export-csv-btn">导出 CSV</button>
+                    </div>
 
-    // 配置
-    const CONFIG = {
-        SPREADSHEET_ID: '10At5Ij9DdMsD0Zw7XGW96kgwhvSni4d9',
-        SHEET_GID: '1022287136',
-        DATA_START_ROW: 7,
-        CACHE_KEY: 'tagPanel_cache',
-        STORAGE_KEY: 'tagPanel_storage',
-        SHORTCUT_KEY: 'tagPanel_shortcut'
-    };
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">💾 本地数据集</label>
+                        <div id="tagPanel-datasets-list"></div>
+                        <button class="tagPanel-settings-btn secondary" id="tagPanel-save-dataset-btn">保存当前数据为数据集</button>
+                    </div>
+                </div>
 
-    // 创建管理器实例
-    const dataManager = new DataManager(CONFIG);
-    const uiManager = new UIManager();
+                <!-- 设置标签页 -->
+                <div class="tagPanel-content" data-tab="settings">
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">🔄 缓存管理</label>
+                        <button class="tagPanel-settings-btn" id="tagPanel-refresh-cache-btn">刷新缓存</button>
+                        <button class="tagPanel-settings-btn secondary" id="tagPanel-clear-cache-btn">清除缓存</button>
+                    </div>
 
-    // 初始化
-    window.addEventListener('load', () => {
-        uiManager.init(dataManager);
-        
-        // 初始加载数据
-        dataManager.fetchFromSpreadsheet().then(() => {
-            console.log('数据已初始化');
-        });
-    });
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">🎮 快捷键设置</label>
+                        <input type="text" class="tagPanel-hotkey-input" id="tagPanel-hotkey-input" placeholder="例: ctrl+shift+t">
+                        <button class="tagPanel-settings-btn" id="tagPanel-save-hotkey-btn" style="margin-top: 8px; width: 100%; box-sizing: border-box;">保存快捷键</button>
+                    </div>
 
-    // 暴露全局对象便于调试
-    window.tagPanel = {
-        dataManager,
-        uiManager
-    };
-})();
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">👁️ 显示设置</label>
+                        <button class="tagPanel-settings-btn secondary" id="tagPanel-toggle-launch-btn">隐藏启动按钮</button>
+                    </div>
 
-// ==================== 存储管理模块 ====================
-class StorageManager {
-    constructor(config) {
-        this.config = config;
-        this.CACHE_KEY = config.CACHE_KEY;
-        this.STORAGE_KEY = config.STORAGE_KEY;
-        this.STORAGE_LIST_KEY = 'tagPanel_storage_list'; // 存储的数据集列表
-    }
+                    <div class="tagPanel-settings-group">
+                        <label class="tagPanel-settings-label">ℹ️ 信息</label>
+                        <div id="tagPanel-info" style="color: #a0a0a0; font-size: 12px; line-height: 1.6;"></div>
+                    </div>
+                </div>
+            `;
 
-    // ========== 缓存管理 ==========
-    
-    // 保存缓存
-    saveCache(data) {
-        try {
-            const cacheData = {
-                timestamp: Date.now(),
-                data: data,
-                version: '1.0'
-            };
-            GM_setValue(this.CACHE_KEY, JSON.stringify(cacheData));
-            console.log(`缓存已保存，包含 ${data.length} 条数据`);
-            return true;
-        } catch (error) {
-            console.error('保存缓存失败:', error);
-            return false;
-        }
-    }
+            document.body.appendChild(container);
 
-    // 加载缓存
-    loadCache() {
-        try {
-            const cached = GM_getValue(this.CACHE_KEY, null);
-            if (!cached) return null;
-            
-            const cacheData = JSON.parse(cached);
-            console.log(`缓存已加载 (${new Date(cacheData.timestamp).toLocaleString()})`);
-            return cacheData;
-        } catch (error) {
-            console.error('加载缓存失败:', error);
-            return null;
-        }
-    }
+            // 初始化信息显示
+            this.updateInfo();
+        },
 
-    // 获取缓存信息
-    getCacheInfo() {
-        const cacheData = this.loadCache();
-        if (!cacheData) {
-            return {
-                exists: false,
-                count: 0,
-                timestamp: null,
-                size: 0
-            };
-        }
+        /**
+         * 绑定事件
+         */
+        bindEvents: function() {
+            // 启动按钮
+            document.getElementById('tagPanel-launch-btn').addEventListener('click', () => {
+                this.togglePanel();
+            });
 
-        return {
-            exists: true,
-            count: cacheData.data.length,
-            timestamp: new Date(cacheData.timestamp).toLocaleString(),
-            size: new Blob([JSON.stringify(cacheData)]).size,
-            timestampRaw: cacheData.timestamp
-        };
-    }
+            // 关闭按钮
+            document.getElementById('tagPanel-close-btn').addEventListener('click', () => {
+                this.closePanel();
+            });
 
-    // 清除缓存
-    clearCache() {
-        try {
-            GM_deleteValue(this.CACHE_KEY);
-            console.log('缓存已清除');
-            return true;
-        } catch (error) {
-            console.error('清除缓存失败:', error);
-            return false;
-        }
-    }
+            // 标签页切换
+            document.querySelectorAll('.tagPanel-tab').forEach(tab => {
+                tab.addEventListener('click', (e) => {
+                    this.switchTab(e.target.dataset.tab);
+                });
+            });
 
-    // 检查缓存是否存在
-    hasCache() {
-        return this.loadCache() !== null;
-    }
+            // 搜索输入
+            document.getElementById('tagPanel-search').addEventListener('input', (e) => {
+                this.filterTags(e.target.value);
+            });
 
-    // ========== 本地存储管理 ==========
+            // 导入按钮
+            document.getElementById('tagPanel-import-json-btn').addEventListener('click', () => {
+                const input = document.getElementById('tagPanel-file-input');
+                input.accept = '.json';
+                input.dataset.type = 'json';
+                input.click();
+            });
 
-    // 保存到本地存储
-    saveToStorage(name, data) {
-        try {
-            const storageItem = {
-                name: name,
-                timestamp: Date.now(),
-                data: data,
-                count: data.length
-            };
+            document.getElementById('tagPanel-import-csv-btn').addEventListener('click', () => {
+                const input = document.getElementById('tagPanel-file-input');
+                input.accept = '.csv';
+                input.dataset.type = 'csv';
+                input.click();
+            });
 
-            // 保存单个数据集
-            GM_setValue(`${this.STORAGE_KEY}_${name}`, JSON.stringify(storageItem));
+            // 文件输入处理
+            document.getElementById('tagPanel-file-input').addEventListener('change', (e) => {
+                this.handleFileImport(e);
+            });
 
-            // 更新存储列表
-            this.updateStorageList(name, 'add');
+            // 导出按钮
+            document.getElementById('tagPanel-export-json-btn').addEventListener('click', () => {
+                this.exportData('json');
+            });
 
-            console.log(`数据已保存到本地存储: ${name}`);
-            return true;
-        } catch (error) {
-            console.error('保存到本地存储失败:', error);
-            return false;
-        }
-    }
+            document.getElementById('tagPanel-export-csv-btn').addEventListener('click', () => {
+                this.exportData('csv');
+            });
 
-    // 从本地存储加载
-    loadFromStorage(name) {
-        try {
-            const stored = GM_getValue(`${this.STORAGE_KEY}_${name}`, null);
-            if (!stored) return null;
-            
-            const item = JSON.parse(stored);
-            console.log(`已从本地存储加载: ${name}`);
-            return item.data;
-        } catch (error) {
-            console.error('从本地存储加载失败:', error);
-            return null;
-        }
-    }
+            // 缓存管理
+            document.getElementById('tagPanel-refresh-cache-btn').addEventListener('click', () => {
+                this.refreshCache();
+            });
 
-    // 获取所有本地存储
-    getAllStorages() {
-        try {
-            const list = GM_getValue(this.STORAGE_LIST_KEY, '[]');
-            const storageList = JSON.parse(list);
+            document.getElementById('tagPanel-clear-cache-btn').addEventListener('click', () => {
+                this.clearCache();
+            });
 
-            const storages = [];
-            storageList.forEach(name => {
-                const stored = GM_getValue(`${this.STORAGE_KEY}_${name}`, null);
-                if (stored) {
-                    const item = JSON.parse(stored);
-                    storages.push({
-                        name: item.name,
-                        timestamp: new Date(item.timestamp).toLocaleString(),
-                        count: item.count,
-                        size: new Blob([stored]).size,
-                        timestampRaw: item.timestamp
-                    });
+            // 快捷键设置
+            document.getElementById('tagPanel-save-hotkey-btn').addEventListener('click', () => {
+                this.saveHotkey();
+            });
+
+            document.getElementById('tagPanel-hotkey-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    this.saveHotkey();
                 }
             });
 
-            return storages.sort((a, b) => b.timestampRaw - a.timestampRaw);
-        } catch (error) {
-            console.error('获取本地存储列表失败:', error);
-            return [];
-        }
-    }
-
-    // 更新存储列表
-    updateStorageList(name, action = 'add') {
-        try {
-            const list = GM_getValue(this.STORAGE_LIST_KEY, '[]');
-            let storageList = JSON.parse(list);
-
-            if (action === 'add') {
-                if (!storageList.includes(name)) {
-                    storageList.push(name);
-                }
-            } else if (action === 'remove') {
-                storageList = storageList.filter(item => item !== name);
-            }
-
-            GM_setValue(this.STORAGE_LIST_KEY, JSON.stringify(storageList));
-        } catch (error) {
-            console.error('更新存储列表失败:', error);
-        }
-    }
-
-    // 从本地存储删除
-    deleteFromStorage(name) {
-        try {
-            GM_deleteValue(`${this.STORAGE_KEY}_${name}`);
-            this.updateStorageList(name, 'remove');
-            console.log(`已从本地存储删除: ${name}`);
-            return true;
-        } catch (error) {
-            console.error('删除本地存储失败:', error);
-            return false;
-        }
-    }
-
-    // 清除所有本地存储
-    clearAllStorages() {
-        try {
-            const list = GM_getValue(this.STORAGE_LIST_KEY, '[]');
-            const storageList = JSON.parse(list);
-
-            storageList.forEach(name => {
-                GM_deleteValue(`${this.STORAGE_KEY}_${name}`);
+            // 显示/隐藏启动按钮
+            document.getElementById('tagPanel-toggle-launch-btn').addEventListener('click', () => {
+                this.toggleLaunchBtn();
             });
 
-            GM_deleteValue(this.STORAGE_LIST_KEY);
-            console.log('所有本地存储已清除');
-            return true;
-        } catch (error) {
-            console.error('清除所有本地存储失败:', error);
-            return false;
-        }
-    }
+            // 保存数据集
+            document.getElementById('tagPanel-save-dataset-btn').addEventListener('click', () => {
+                this.saveDataset();
+            });
+        },
 
-    // ========== 导入/导出 ==========
+        /**
+         * 加载并显示标签
+         */
+        loadTags: async function() {
+            try {
+                // 显示加载状态
+                const tagsList = document.getElementById('tagPanel-tags-list');
+                tagsList.innerHTML = '<div class="tagPanel-message">加载中...</div>';
 
-    // 导出为JSON
-    exportToJSON(data, filename = 'tags_export.json') {
-        try {
-            const exportData = {
-                exportTime: new Date().toISOString(),
-                version: '1.0',
-                itemCount: data.length,
-                data: data
+                // 加载数据
+                this.allData = await DataManager.loadData();
+                this.filteredData = this.allData;
+
+                // 渲染标签
+                this.renderTags();
+            } catch (error) {
+                console.error('加载标签失败:', error);
+                document.getElementById('tagPanel-tags-list').innerHTML =
+                    '<div class="tagPanel-message">加载失败: ' + error.message + '</div>';
+            }
+        },
+
+        /**
+         * 渲染标签列表
+         */
+        renderTags: function() {
+            const tagsList = document.getElementById('tagPanel-tags-list');
+
+            if (this.filteredData.length === 0) {
+                tagsList.innerHTML = '<div class="tagPanel-message">未找到匹配的标签</div>';
+                return;
+            }
+
+            tagsList.innerHTML = this.filteredData.map(tag => `
+                <div class="tagPanel-tag-item">
+                    <div class="tagPanel-tag-english">${escapeHtml(tag.english)}</div>
+                    <div class="tagPanel-tag-chinese">${escapeHtml(tag.chinese)}</div>
+                    <div class="tagPanel-tag-description">${escapeHtml(tag.description)}</div>
+                </div>
+            `).join('');
+        },
+
+        /**
+         * 过滤标签
+         */
+        filterTags: function(query) {
+            if (!query.trim()) {
+                this.filteredData = this.allData;
+            } else {
+                this.filteredData = this.allData.filter(tag =>
+                    fuzzyMatch(query, tag.english) ||
+                    fuzzyMatch(query, tag.chinese) ||
+                    fuzzyMatch(query, tag.description)
+                );
+            }
+            this.renderTags();
+        },
+
+        /**
+         * 切换标签页
+         */
+        switchTab: function(tabName) {
+            // 更新按钮样式
+            document.querySelectorAll('.tagPanel-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+
+            // 更新内容显示
+            document.querySelectorAll('.tagPanel-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelector(`.tagPanel-content[data-tab="${tabName}"]`).classList.add('active');
+
+            // 切换到设置标签页时，更新信息和快捷键输入框
+            if (tabName === 'settings') {
+                document.getElementById('tagPanel-hotkey-input').value = getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY;
+                this.updateInfo();
+            }
+
+            // 切换到存储标签页时，更新数据集列表
+            if (tabName === 'storage') {
+                this.updateDatasetsList();
+            }
+        },
+
+        /**
+         * 切换面板显示/隐藏
+         */
+        togglePanel: function() {
+            const container = document.getElementById('tagPanel-container');
+            if (container.style.display === 'none') {
+                this.openPanel();
+            } else {
+                this.closePanel();
+            }
+        },
+
+        /**
+         * 打开面板
+         */
+        openPanel: function() {
+            const container = document.getElementById('tagPanel-container');
+            container.style.display = 'flex';
+
+            // 如果还没有加载数据，加载数据
+            if (this.allData.length === 0) {
+                this.loadTags();
+            }
+        },
+
+        /**
+         * 关闭面板
+         */
+        closePanel: function() {
+            document.getElementById('tagPanel-container').style.display = 'none';
+        },
+
+        /**
+         * 处理文件导入
+         */
+        handleFileImport: async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const fileType = document.getElementById('tagPanel-file-input').dataset.type;
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+                try {
+                    let data = [];
+
+                    if (fileType === 'json') {
+                        // JSON格式导入
+                        data = JSON.parse(event.target.result);
+                        if (!Array.isArray(data)) {
+                            throw new Error('JSON数据必须是数组格式');
+                        }
+                    } else if (fileType === 'csv') {
+                        // CSV格式导入
+                        data = parseCSV(event.target.result);
+                    }
+
+                    // 验证数据格式
+                    if (data.length === 0) {
+                        this.showMessage('⚠️ 导入失败：数据为空');
+                        return;
+                    }
+
+                    // 检查数据结构
+                    const firstItem = data[0];
+                    if (!firstItem.english && !firstItem.chinese) {
+                        throw new Error('数据格式错误：缺少必需字段(english/chinese)');
+                    }
+
+                    // 替换当前数据
+                    this.allData = data;
+                    this.filteredData = data;
+                    DataManager.setCache(data);
+
+                    this.renderTags();
+                    this.showMessage('✅ 导入成功: ' + data.length + ' 条记录');
+                } catch (error) {
+                    this.showMessage('❌ 导入失败: ' + error.message);
+                    console.error('导入错误:', error);
+                }
             };
 
-            const dataStr = JSON.stringify(exportData, null, 2);
-            const dataBlob = new Blob([dataStr], { type: 'application/json' });
-            const url = URL.createObjectURL(dataBlob);
+            reader.readAsText(file);
 
+            // 重置文件输入
+            e.target.value = '';
+        },
+
+        /**
+         * 导出数据
+         */
+        exportData: function(format) {
+            const data = this.allData.length > 0 ? this.allData : [];
+
+            if (data.length === 0) {
+                this.showMessage('⚠️ 没有数据可导出');
+                return;
+            }
+
+            let content, filename, mimeType;
+
+            if (format === 'json') {
+                // 导出为JSON
+                content = JSON.stringify(data, null, 2);
+                filename = 'tags-' + new Date().toISOString().split('T')[0] + '.json';
+                mimeType = 'application/json';
+            } else if (format === 'csv') {
+                // 导出为CSV
+                const headers = ['English', 'Chinese', 'Description'];
+                const rows = data.map(tag => [
+                    '"' + (tag.english || '').replace(/"/g, '""') + '"',
+                    '"' + (tag.chinese || '').replace(/"/g, '""') + '"',
+                    '"' + (tag.description || '').replace(/"/g, '""') + '"'
+                ]);
+                content = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+                filename = 'tags-' + new Date().toISOString().split('T')[0] + '.csv';
+                mimeType = 'text/csv;charset=utf-8';
+            }
+
+            // 创建Blob并下载
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
             link.download = filename;
@@ -999,956 +1008,297 @@ class StorageManager {
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
 
-            console.log(`数据已导出: ${filename}`);
-            return true;
-        } catch (error) {
-            console.error('导出JSON失败:', error);
-            return false;
-        }
-    }
+            this.showMessage('✅ 导出成功: ' + filename);
+        },
 
-    // 从JSON导入
-    async importFromJSON(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-
-            reader.onload = (e) => {
-                try {
-                    const content = e.target.result;
-                    const importData = JSON.parse(content);
-
-                    // 验证导入数据格式
-                    if (!importData.data || !Array.isArray(importData.data)) {
-                        reject(new Error('导入文件格式不正确'));
-                        return;
-                    }
-
-                    // 验证数据项格式
-                    const validData = importData.data.filter(item =>
-                        item.english && item.chinese && item.description !== undefined
-                    );
-
-                    if (validData.length === 0) {
-                        reject(new Error('导入文件中没有有效的数据'));
-                        return;
-                    }
-
-                    console.log(`已从JSON导入 ${validData.length} 条数据`);
-                    resolve(validData);
-                } catch (error) {
-                    reject(new Error('导入JSON失败: ' + error.message));
-                }
-            };
-
-            reader.onerror = () => {
-                reject(new Error('读取文件失败'));
-            };
-
-            reader.readAsText(file);
-        });
-    }
-
-    // 从CSV导入
-    async importFromCSV(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-
-            reader.onload = (e) => {
-                try {
-                    const csv = e.target.result;
-                    const lines = csv.split('\n');
-                    const data = [];
-
-                    // 跳过表头行（如果有）
-                    const startIndex = this.isCSVHeader(lines[0]) ? 1 : 0;
-
-                    for (let i = startIndex; i < lines.length; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        const parts = this.parseCSVLine(line);
-                        if (parts.length >= 3) {
-                            data.push({
-                                english: parts[0].trim(),
-                                chinese: parts[1].trim(),
-                                description: parts[2].trim()
-                            });
-                        }
-                    }
-
-                    if (data.length === 0) {
-                        reject(new Error('导入文件中没有有效的数据'));
-                        return;
-                    }
-
-                    console.log(`已从CSV导入 ${data.length} 条数据`);
-                    resolve(data);
-                } catch (error) {
-                    reject(new Error('导入CSV失败: ' + error.message));
-                }
-            };
-
-            reader.onerror = () => {
-                reject(new Error('读取文件失败'));
-            };
-
-            reader.readAsText(file);
-        });
-    }
-
-    // 检查CSV是否有表头
-    isCSVHeader(firstLine) {
-        const parts = this.parseCSVLine(firstLine);
-        const headers = ['english', 'tag', '标签', 'description', '描述', 'col', '列'];
-        return parts.some(part => 
-            headers.some(header => part.toLowerCase().includes(header))
-        );
-    }
-
-    // CSV行解析
-    parseCSVLine(line) {
-        const result = [];
-        let current = '';
-        let inQuotes = false;
-
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-
-            if (char === '"') {
-                inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-                result.push(current);
-                current = '';
-            } else {
-                current += char;
-            }
-        }
-
-        result.push(current);
-        return result;
-    }
-
-    // 获取统计信息
-    getStatistics() {
-        const cacheInfo = this.getCacheInfo();
-        const storages = this.getAllStorages();
-        const totalStorageSize = storages.reduce((sum, s) => sum + s.size, 0);
-
-        return {
-            cache: cacheInfo,
-            storages: storages,
-            storageCount: storages.length,
-            totalStorageSize: totalStorageSize,
-            totalSize: cacheInfo.size + totalStorageSize
-        };
-    }
-}
-
-// ==================== 更新DataManager类 ====================
-class DataManager {
-    constructor(config) {
-        this.config = config;
-        this.data = [];
-        this.storageManager = new StorageManager(config);
-    }
-
-    // 从Google Sheets获取数据
-    async fetchFromSpreadsheet() {
-        try {
-            const csvUrl = `https://docs.google.com/spreadsheets/d/${this.config.SPREADSHEET_ID}/export?format=csv&gid=${this.config.SHEET_GID}`;
-            
-            const response = await fetch(csvUrl);
-            const csv = await response.text();
-            this.parseCSV(csv);
-            
-            // 自动保存到缓存
-            this.storageManager.saveCache(this.data);
-            
-            return this.data;
-        } catch (error) {
-            console.error('获取数据失败:', error);
-            // 如果获取失败，尝试从缓存读取
-            const cacheData = this.storageManager.loadCache();
-            if (cacheData) {
-                this.data = cacheData.data;
-                console.log('已从缓存加载数据');
-                return this.data;
-            }
-            return [];
-        }
-    }
-
-    // 解析CSV数据
-    parseCSV(csv) {
-        const lines = csv.split('\n');
-        this.data = [];
-        
-        for (let i = this.config.DATA_START_ROW - 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            
-            const parts = this.parseCSVLine(line);
-            if (parts.length >= 3) {
-                this.data.push({
-                    english: parts[0].trim(),
-                    chinese: parts[1].trim(),
-                    description: parts[2].trim()
-                });
-            }
-        }
-        
-        console.log(`已加载 ${this.data.length} 条数据`);
-    }
-
-    // CSV行解析
-    parseCSVLine(line) {
-        const result = [];
-        let current = '';
-        let inQuotes = false;
-        
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            
-            if (char === '"') {
-                inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-                result.push(current);
-                current = '';
-            } else {
-                current += char;
-            }
-        }
-        
-        result.push(current);
-        return result;
-    }
-
-    // 搜索数据
-    search(keyword) {
-        if (!keyword) return this.data;
-        
-        const lowerKeyword = keyword.toLowerCase();
-        return this.data.filter(item => 
-            item.english.toLowerCase().includes(lowerKeyword) ||
-            item.chinese.toLowerCase().includes(lowerKeyword) ||
-            item.description.toLowerCase().includes(lowerKeyword)
-        );
-    }
-
-    // 获取所有数据
-    getAll() {
-        return this.data;
-    }
-
-    // 刷新数据
-    async refresh() {
-        console.log('正在刷新数据...');
-        return await this.fetchFromSpreadsheet();
-    }
-}
-
-// ==================== 设置管理模块 ====================
-class SettingsManager {
-    constructor(dataManager, uiManager) {
-        this.dataManager = dataManager;
-        this.uiManager = uiManager;
-        this.storageManager = dataManager.storageManager;
-    }
-
-    // 初始化设置页面
-    initSettingsTab() {
-        this.setupDataManagementTab();
-        this.setupLocalStorageTab();
-        this.setupInterfaceSettingsTab();
-    }
-
-    // ========== 数据管理标签页 ==========
-    setupDataManagementTab() {
-        const container = document.getElementById('tagPanel-data-management-tab');
-        
-        container.innerHTML = `
-            <div class="tagPanel-settings-section">
-                <h3 class="tagPanel-settings-title">📊 缓存管理</h3>
-                
-                <div class="tagPanel-settings-item">
-                    <div class="tagPanel-settings-info" id="tagPanel-cache-info">
-                        <div>状态: 未缓存</div>
-                        <div>数据量: 0 条</div>
-                        <div>时间: -</div>
-                    </div>
-                </div>
-
-                <div class="tagPanel-settings-actions">
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-refresh-data">
-                        🔄 刷新数据
-                    </button>
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-clear-cache">
-                        🗑️ 清除缓存
-                    </button>
-                </div>
-
-                <div class="tagPanel-divider"></div>
-
-                <h3 class="tagPanel-settings-title">📥 导入数据</h3>
-                <div class="tagPanel-settings-actions">
-                    <label class="tagPanel-file-input-label">
-                        <input type="file" id="tagPanel-import-json" accept=".json" style="display: none;">
-                        📄 导入 JSON
-                    </label>
-                    <label class="tagPanel-file-input-label">
-                        <input type="file" id="tagPanel-import-csv" accept=".csv" style="display: none;">
-                        📋 导入 CSV
-                    </label>
-                </div>
-
-                <div class="tagPanel-divider"></div>
-
-                <h3 class="tagPanel-settings-title">📤 导出数据</h3>
-                <div class="tagPanel-settings-actions">
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-export-json">
-                        📄 导出为 JSON
-                    </button>
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-export-csv">
-                        📋 导出为 CSV
-                    </button>
-                </div>
-            </div>
-        `;
-
-        this.attachDataManagementListeners();
-    }
-
-    attachDataManagementListeners() {
-        // 刷新缓存显示
-        this.updateCacheInfo();
-
-        // 刷新数据
-        document.getElementById('tagPanel-btn-refresh-data').addEventListener('click', async () => {
-            const btn = event.target;
-            const originalText = btn.textContent;
-            btn.textContent = '⏳ 刷新中...';
-            btn.disabled = true;
-
+        /**
+         * 刷新缓存
+         */
+        refreshCache: async function() {
             try {
-                await this.dataManager.refresh();
-                this.uiManager.renderTagsList(this.dataManager.getAll());
-                this.updateCacheInfo();
-                this.showNotification('✅ 数据已刷新');
+                document.getElementById('tagPanel-tags-list').innerHTML = '<div class="tagPanel-message">刷新中...</div>';
+                DataManager.clearCache();
+                this.allData = await DataManager.fetchData();
+                DataManager.setCache(this.allData);
+                this.filteredData = this.allData;
+                this.renderTags();
+                this.showMessage('✅ 缓存已刷新');
             } catch (error) {
-                this.showNotification('❌ 刷新失败: ' + error.message);
-            } finally {
-                btn.textContent = originalText;
-                btn.disabled = false;
+                this.showMessage('❌ 刷新失败: ' + error.message);
+                console.error('刷新错误:', error);
             }
-        });
+        },
 
-        // 清除缓存
-        document.getElementById('tagPanel-btn-clear-cache').addEventListener('click', () => {
-            if (confirm('确定要清除缓存吗？')) {
-                this.storageManager.clearCache();
-                this.dataManager.data = [];
-                this.uiManager.renderTagsList([]);
-                this.updateCacheInfo();
-                this.showNotification('✅ 缓存已清除');
-            }
-        });
+        /**
+         * 清除缓存
+         */
+        clearCache: function() {
+            DataManager.clearCache();
+            this.allData = [];
+            this.filteredData = [];
+            document.getElementById('tagPanel-tags-list').innerHTML = '<div class="tagPanel-message">缓存已清除，下次打开时重新加载</div>';
+            this.showMessage('✅ 缓存已清除');
+        },
 
-        // 导入JSON
-        document.getElementById('tagPanel-import-json').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
+        /**
+         * 保存快捷键
+         */
+        saveHotkey: function() {
+            const hotkeyInput = document.getElementById('tagPanel-hotkey-input').value.trim();
 
-            try {
-                const data = await this.storageManager.importFromJSON(file);
-                this.dataManager.data = data;
-                this.storageManager.saveCache(data);
-                this.uiManager.renderTagsList(data);
-                this.updateCacheInfo();
-                this.showNotification(`✅ 已导入 ${data.length} 条数据`);
-            } catch (error) {
-                this.showNotification('❌ 导入失败: ' + error.message);
-            }
-
-            // 重置input
-            e.target.value = '';
-        });
-
-        // 导入CSV
-        document.getElementById('tagPanel-import-csv').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            try {
-                const data = await this.storageManager.importFromCSV(file);
-                this.dataManager.data = data;
-                this.storageManager.saveCache(data);
-                this.uiManager.renderTagsList(data);
-                this.updateCacheInfo();
-                this.showNotification(`✅ 已导入 ${data.length} 条数据`);
-            } catch (error) {
-                this.showNotification('❌ 导入失败: ' + error.message);
-            }
-
-            // 重置input
-            e.target.value = '';
-        });
-
-        // 导出JSON
-        document.getElementById('tagPanel-btn-export-json').addEventListener('click', () => {
-            const data = this.dataManager.getAll();
-            if (data.length === 0) {
-                this.showNotification('⚠️ 没有数据可导出');
+            if (!hotkeyInput) {
+                this.showMessage('⚠️ 快捷键不能为空');
                 return;
             }
 
-            const timestamp = new Date().toISOString().slice(0, 10);
-            this.storageManager.exportToJSON(data, `tags_${timestamp}.json`);
-            this.showNotification('✅ 已导出 JSON 文件');
-        });
+            setStorage('hotkey', hotkeyInput);
+            document.getElementById('tagPanel-launch-btn').title = '点击打开标签查询面板 (快捷键: ' + hotkeyInput + ')';
+            this.showMessage('✅ 快捷键已保存: ' + hotkeyInput);
 
-        // 导出CSV
-        document.getElementById('tagPanel-btn-export-csv').addEventListener('click', () => {
-            const data = this.dataManager.getAll();
-            if (data.length === 0) {
-                this.showNotification('⚠️ 没有数据可导出');
-                return;
-            }
+            // 重新绑定快捷键
+            HotkeyManager.unbind();
+            HotkeyManager.bind(hotkeyInput);
+        },
 
-            const csv = this.convertToCSV(data);
-            const timestamp = new Date().toISOString().slice(0, 10);
-            this.downloadCSV(csv, `tags_${timestamp}.csv`);
-            this.showNotification('✅ 已导出 CSV 文件');
-        });
-    }
+        /**
+         * 隐藏/显示启动按钮
+         */
+        toggleLaunchBtn: function() {
+            const launchBtn = document.getElementById('tagPanel-launch-btn');
+            const isHidden = getStorage('launchBtnHidden');
 
-    // ========== 本地存储标签页 ==========
-    setupLocalStorageTab() {
-        const container = document.getElementById('tagPanel-local-storage-tab');
-        
-        container.innerHTML = `
-            <div class="tagPanel-settings-section">
-                <h3 class="tagPanel-settings-title">💾 已保存的数据集</h3>
-                
-                <div class="tagPanel-settings-item">
-                    <input 
-                        type="text" 
-                        id="tagPanel-storage-name" 
-                        placeholder="输入数据集名称..." 
-                        class="tagPanel-input-text"
-                    >
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-save-storage">
-                        💾 保存当前数据
-                    </button>
-                </div>
-
-                <div class="tagPanel-divider"></div>
-
-                <div id="tagPanel-storage-list" class="tagPanel-storage-list">
-                    <div style="color: #AAA; padding: 20px; text-align: center;">暂无保存的数据集</div>
-                </div>
-
-                <div class="tagPanel-divider"></div>
-
-                <div class="tagPanel-settings-actions">
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-clear-all-storage">
-                        🗑️ 清除所有存储
-                    </button>
-                </div>
-            </div>
-        `;
-
-        this.attachLocalStorageListeners();
-    }
-
-    attachLocalStorageListeners() {
-        // 保存数据集
-        document.getElementById('tagPanel-btn-save-storage').addEventListener('click', () => {
-            const name = document.getElementById('tagPanel-storage-name').value.trim();
-            if (!name) {
-                this.showNotification('⚠️ 请输入数据集名称');
-                return;
-            }
-
-            const data = this.dataManager.getAll();
-            if (data.length === 0) {
-                this.showNotification('⚠️ 没有数据可保存');
-                return;
-            }
-
-            this.storageManager.saveToStorage(name, data);
-            document.getElementById('tagPanel-storage-name').value = '';
-            this.updateStorageList();
-            this.showNotification(`✅ 已保存数据集: ${name}`);
-        });
-
-        // 清除所有存储
-        document.getElementById('tagPanel-btn-clear-all-storage').addEventListener('click', () => {
-            if (confirm('确定要清除所有已保存的数据集吗？')) {
-                this.storageManager.clearAllStorages();
-                this.updateStorageList();
-                this.showNotification('✅ 所有存储已清除');
-            }
-        });
-
-        this.updateStorageList();
-    }
-
-    updateStorageList() {
-        const container = document.getElementById('tagPanel-storage-list');
-        const storages = this.storageManager.getAllStorages();
-
-        if (storages.length === 0) {
-            container.innerHTML = '<div style="color: #AAA; padding: 20px; text-align: center;">暂无保存的数据集</div>';
-            return;
-        }
-
-        container.innerHTML = '';
-        storages.forEach(storage => {
-            const item = document.createElement('div');
-            item.className = 'tagPanel-storage-item';
-            item.innerHTML = `
-                <div class="tagPanel-storage-info">
-                    <div class="tagPanel-storage-name">${this.escapeHtml(storage.name)}</div>
-                    <div class="tagPanel-storage-meta">
-                        📊 ${storage.count} 条 | ⏰ ${storage.timestamp} | 💾 ${(storage.size / 1024).toFixed(2)} KB
-                    </div>
-                </div>
-                <div class="tagPanel-storage-actions">
-                    <button class="tagPanel-btn-tiny" data-action="load" data-name="${storage.name}">📂</button>
-                    <button class="tagPanel-btn-tiny" data-action="delete" data-name="${storage.name}">🗑️</button>
-                </div>
-            `;
-
-            // 加载数据集
-            item.querySelector('[data-action="load"]').addEventListener('click', () => {
-                const data = this.storageManager.loadFromStorage(storage.name);
-                if (data) {
-                    this.dataManager.data = data;
-                    this.uiManager.renderTagsList(data);
-                    this.showNotification(`✅ 已加载: ${storage.name}`);
-                }
-            });
-
-            // 删除数据集
-            item.querySelector('[data-action="delete"]').addEventListener('click', () => {
-                if (confirm(`确定要删除 "${storage.name}" 吗？`)) {
-                    this.storageManager.deleteFromStorage(storage.name);
-                    this.updateStorageList();
-                    this.showNotification(`✅ 已删除: ${storage.name}`);
-                }
-            });
-
-            container.appendChild(item);
-        });
-    }
-
-    // ========== 界面设置标签页 ==========
-    setupInterfaceSettingsTab() {
-        const container = document.getElementById('tagPanel-interface-settings-tab');
-        const shortcutKey = GM_getValue('tagPanel_shortcut_key', 'Alt+T');
-        const hideBtn = GM_getValue('tagPanel_hide_btn', false);
-
-        container.innerHTML = `
-            <div class="tagPanel-settings-section">
-                <h3 class="tagPanel-settings-title">⌨️ 快捷键设置</h3>
-                
-                <div class="tagPanel-settings-item">
-                    <label class="tagPanel-settings-label">打开/关闭面板：</label>
-                    <input 
-                        type="text" 
-                        id="tagPanel-shortcut-input" 
-                        placeholder="例如: Alt+T, Ctrl+Shift+E" 
-                        class="tagPanel-input-text"
-                        value="${shortcutKey}"
-                    >
-                    <small style="color: #888; display: block; margin-top: 5px;">
-                        格式: Ctrl, Alt, Shift 与字母/数字用 + 连接<br>
-                        示例: Alt+T, Ctrl+E, Ctrl+Shift+S
-                    </small>
-                </div>
-
-                <div class="tagPanel-settings-actions">
-                    <button class="tagPanel-btn-small" id="tagPanel-btn-save-shortcut">
-                        💾 保存快捷键
-                    </button>
-                </div>
-
-                <div class="tagPanel-divider"></div>
-
-                <h3 class="tagPanel-settings-title">👁️ 界面设置</h3>
-
-                <div class="tagPanel-settings-item">
-                    <label class="tagPanel-checkbox-label">
-                        <input type="checkbox" id="tagPanel-hide-btn-checkbox" ${hideBtn ? 'checked' : ''}>
-                        隐藏启动按钮（可通过快捷键打开）
-                    </label>
-                </div>
-
-                <div class="tagPanel-divider"></div>
-
-                <h3 class="tagPanel-settings-title">ℹ️ 关于</h3>
-                <div class="tagPanel-settings-info">
-                    <div>📌 版本: 1.0</div>
-                    <div>🎮 主题: Game Menu Style</div>
-                    <div id="tagPanel-stats">
-                        <div>数据统计: 加载中...</div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        this.attachInterfaceSettingsListeners();
-    }
-
-    attachInterfaceSettingsListeners() {
-        // 保存快捷键
-        document.getElementById('tagPanel-btn-save-shortcut').addEventListener('click', () => {
-            const shortcut = document.getElementById('tagPanel-shortcut-input').value.trim();
-            
-            if (!shortcut) {
-                this.showNotification('⚠️ 请输入快捷键');
-                return;
-            }
-
-            // 简单验证
-            if (!this.validateShortcut(shortcut)) {
-                this.showNotification('⚠️ 快捷键格式不正确');
-                return;
-            }
-
-            GM_setValue('tagPanel_shortcut_key', shortcut);
-            this.showNotification(`✅ 快捷键已保存: ${shortcut}`);
-        });
-
-        // 隐藏启动按钮
-        document.getElementById('tagPanel-hide-btn-checkbox').addEventListener('change', (e) => {
-            const hideBtn = e.target.checked;
-            GM_setValue('tagPanel_hide_btn', hideBtn);
-
-            if (hideBtn) {
-                this.uiManager.launchBtn.classList.add('hidden');
+            if (isHidden) {
+                // 显示按钮
+                launchBtn.style.display = 'flex';
+                setStorage('launchBtnHidden', false);
+                this.showMessage('✅ 启动按钮已显示');
             } else {
-                this.uiManager.launchBtn.classList.remove('hidden');
+                // 隐藏按钮
+                launchBtn.style.display = 'none';
+                setStorage('launchBtnHidden', true);
+                this.showMessage('✅ 启动按钮已隐藏');
+            }
+        },
+
+        /**
+         * 保存当前数据为数据集
+         */
+        saveDataset: function() {
+            if (this.allData.length === 0) {
+                this.showMessage('⚠️ 没有数据可保存');
+                return;
             }
 
-            this.showNotification(hideBtn ? '✅ 启动按钮已隐藏' : '✅ 启动按钮已显示');
-        });
+            const timestamp = new Date().toLocaleString('zh-CN');
+            const datasetName = 'dataset_' + Date.now();
 
-        // 更新统计信息
-        this.updateStatistics();
-    }
+            const datasets = getStorage('datasets') || {};
+            datasets[datasetName] = {
+                name: '数据集 ' + timestamp,
+                data: this.allData,
+                timestamp: Date.now()
+            };
 
-    // ========== 辅助方法 ==========
+            setStorage('datasets', datasets);
+            this.updateDatasetsList();
+            this.showMessage('✅ 数据集已保存');
+        },
 
-    // 验证快捷键格式
-    validateShortcut(shortcut) {
-        const parts = shortcut.split('+').map(p => p.trim());
-        if (parts.length < 2) return false;
+        /**
+         * 更新数据集列表
+         */
+        updateDatasetsList: function() {
+            const datasets = getStorage('datasets') || {};
+            const listContainer = document.getElementById('tagPanel-datasets-list');
 
-        const validModifiers = ['ctrl', 'alt', 'shift'];
-        const modifiersCount = parts.filter(p => validModifiers.includes(p.toLowerCase())).length;
-        
-        // 至少需要一个功能键或修饰符
-        return modifiersCount >= 1 && parts.length > modifiersCount;
-    }
-
-    // 更新缓存信息
-    updateCacheInfo() {
-        const cacheInfo = this.storageManager.getCacheInfo();
-        const infoDiv = document.getElementById('tagPanel-cache-info');
-        
-        if (!infoDiv) return;
-
-        if (cacheInfo.exists) {
-            infoDiv.innerHTML = `
-                <div>✅ 状态: 已缓存</div>
-                <div>📊 数据量: ${cacheInfo.count} 条</div>
-                <div>💾 大小: ${(cacheInfo.size / 1024).toFixed(2)} KB</div>
-                <div>⏰ 时间: ${cacheInfo.timestamp}</div>
-            `;
-        } else {
-            infoDiv.innerHTML = `
-                <div>⚠️ 状态: 未缓存</div>
-                <div>📊 数据量: 0 条</div>
-                <div>⏰ 时间: -</div>
-            `;
-        }
-    }
-
-    // 更新统计信息
-    updateStatistics() {
-        const statsDiv = document.getElementById('tagPanel-stats');
-        if (!statsDiv) return;
-
-        const stats = this.storageManager.getStatistics();
-        const totalSize = (stats.totalSize / 1024).toFixed(2);
-        const cacheSize = (stats.cache.size / 1024).toFixed(2);
-        const storageSize = (stats.totalStorageSize / 1024).toFixed(2);
-
-        statsDiv.innerHTML = `
-            <div>📊 当前数据: ${this.dataManager.data.length} 条</div>
-            <div>💾 缓存: ${stats.cache.count} 条 (${cacheSize} KB)</div>
-            <div>📦 存储集: ${stats.storageCount} 个 (${storageSize} KB)</div>
-            <div>📈 总大小: ${totalSize} KB</div>
-        `;
-    }
-
-    // 转换为CSV
-    convertToCSV(data) {
-        let csv = 'English TAG,中文标签,描述\n';
-        
-        data.forEach(item => {
-            const english = `"${(item.english || '').replace(/"/g, '""')}"`;
-            const chinese = `"${(item.chinese || '').replace(/"/g, '""')}"`;
-            const description = `"${(item.description || '').replace(/"/g, '""')}"`;
-            csv += `${english},${chinese},${description}\n`;
-        });
-
-        return csv;
-    }
-
-    // 下载CSV
-    downloadCSV(csv, filename) {
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    }
-
-    // 显示通知
-    showNotification(message) {
-        const notification = document.createElement('div');
-        notification.className = 'tagPanel-notification';
-        notification.textContent = message;
-        document.body.appendChild(notification);
-
-        // 2秒后移除
-        setTimeout(() => {
-            notification.classList.add('fadeout');
-            setTimeout(() => {
-                document.body.removeChild(notification);
-            }, 300);
-        }, 2000);
-    }
-
-    // HTML转义
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-}
-
-// ==================== 更新UIManager类 ====================
-class UIManager {
-    constructor() {
-        this.dataManager = null;
-        this.settingsManager = null;
-        this.currentData = [];
-        this.launchBtn = null;
-        this.mainPanel = null;
-        this.isVisible = false;
-    }
-
-    // 初始化UI管理器
-    init(dataManager) {
-        this.dataManager = dataManager;
-        this.settingsManager = new SettingsManager(dataManager, this);
-        
-        this.setupElements();
-        this.setupEventListeners();
-        this.restoreSettings();
-        this.settingsManager.initSettingsTab();
-    }
-
-    // 获取DOM元素
-    setupElements() {
-        this.launchBtn = document.getElementById('tagPanel-launch-btn');
-        this.mainPanel = document.getElementById('tagPanel-main');
-        this.searchInput = document.getElementById('tagPanel-search-input');
-        this.tagsList = document.getElementById('tagPanel-tags-list');
-        this.closeBtn = document.getElementById('tagPanel-close-btn');
-        this.tabs = document.querySelectorAll('.tagPanel-tab');
-        this.tabContents = document.querySelectorAll('.tagPanel-tab-content');
-    }
-
-    // 设置事件监听
-    setupEventListeners() {
-        // 启动按钮
-        this.launchBtn.addEventListener('click', () => this.togglePanel());
-
-        // 关闭按钮
-        this.closeBtn.addEventListener('click', () => this.hidePanel());
-
-        // 搜索框
-        this.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
-
-        // 标签页切换
-        this.tabs.forEach(tab => {
-            tab.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
-        });
-
-        // 快捷键监听
-        document.addEventListener('keydown', (e) => this.handleShortcut(e));
-
-        // 页面失焦时关闭面板
-        document.addEventListener('click', (e) => {
-            if (!this.mainPanel.contains(e.target) && e.target !== this.launchBtn) {
-                if (this.isVisible) {
-                    this.hidePanel();
-                }
+            if (Object.keys(datasets).length === 0) {
+                listContainer.innerHTML = '<div style="color: #a0a0a0; text-align: center; padding: 10px;">还没有保存的数据集</div>';
+                return;
             }
-        });
-    }
 
-    // 切换面板显示/隐藏
-    togglePanel() {
-        if (this.isVisible) {
-            this.hidePanel();
-        } else {
-            this.showPanel();
-        }
-    }
+            let html = '';
+            for (const [key, dataset] of Object.entries(datasets)) {
+                html += `
+                    <div class="tagPanel-dataset-item">
+                        <div>
+                            <div class="tagPanel-dataset-name">${escapeHtml(dataset.name)}</div>
+                            <div style="color: #666; font-size: 11px; margin-top: 3px;">${dataset.data.length} 条记录</div>
+                        </div>
+                        <button class="tagPanel-dataset-delete-btn" data-key="${key}">删除</button>
+                    </div>
+                `;
+            }
 
-    // 显示面板
-    async showPanel() {
-        // 如果数据为空，先加载数据
-        if (this.dataManager.data.length === 0) {
-            console.log('加载数据中...');
-            await this.dataManager.fetchFromSpreadsheet();
-        }
+            listContainer.innerHTML = html;
 
-        this.currentData = this.dataManager.getAll();
-        this.renderTagsList(this.currentData);
-        this.mainPanel.style.display = 'flex';
-        this.isVisible = true;
-        this.searchInput.focus();
-        
-        // 重置搜索框
-        this.searchInput.value = '';
-    }
-
-    // 隐藏面板
-    hidePanel() {
-        this.mainPanel.style.display = 'none';
-        this.isVisible = false;
-    }
-
-    // 搜索处理
-    handleSearch(keyword) {
-        const results = this.dataManager.search(keyword);
-        this.currentData = results;
-        this.renderTagsList(results);
-    }
-
-    // 渲染标签列表
-    renderTagsList(items) {
-        this.tagsList.innerHTML = '';
-
-        if (items.length === 0) {
-            this.tagsList.innerHTML = '<div style="color: #AAA; padding: 20px; text-align: center;">未找到匹配的标签</div>';
-            return;
-        }
-
-        items.forEach(item => {
-            const tagElement = document.createElement('div');
-            tagElement.className = 'tagPanel-tag-item';
-            tagElement.innerHTML = `
-                <div class="tagPanel-tag-name">${this.escapeHtml(item.english)}</div>
-                <div class="tagPanel-tag-chinese">${this.escapeHtml(item.chinese)}</div>
-                <div class="tagPanel-tag-desc">${this.escapeHtml(item.description)}</div>
-            `;
-            
-            // 点击复制到剪贴板
-            tagElement.addEventListener('click', () => {
-                const text = `${item.english} (${item.chinese})`;
-                navigator.clipboard.writeText(text).then(() => {
-                    this.settingsManager.showNotification(`✅ 已复制: ${text}`);
+            // 绑定删除按钮事件
+            listContainer.querySelectorAll('.tagPanel-dataset-delete-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    this.deleteDataset(e.target.dataset.key);
                 });
             });
-            
-            this.tagsList.appendChild(tagElement);
-        });
-    }
+        },
 
-    // 标签页切换
-    switchTab(tabName) {
-        // 更新标签页状态
-        this.tabs.forEach(tab => {
-            tab.classList.remove('active');
-            if (tab.dataset.tab === tabName) {
-                tab.classList.add('active');
+        /**
+         * 删除数据集
+         */
+        deleteDataset: function(key) {
+            if (!confirm('确定要删除这个数据集吗？')) return;
+
+            const datasets = getStorage('datasets') || {};
+            delete datasets[key];
+            setStorage('datasets', datasets);
+            this.updateDatasetsList();
+            this.showMessage('✅ 数据集已删除');
+        },
+
+        /**
+         * 显示消息提示
+         */
+        showMessage: function(message) {
+            // 移除旧消息
+            const oldMsg = document.querySelector('.tagPanel-message');
+            if (oldMsg && oldMsg.parentElement.id !== 'tagPanel-tags-list') {
+                oldMsg.remove();
             }
-        });
 
-        // 更新内容显示
-        this.tabContents.forEach(content => {
-            content.classList.remove('active');
-            if (content.id === `tagPanel-${tabName}-tab`) {
-                content.classList.add('active');
+            // 在最上方显示消息
+            const content = document.querySelector('.tagPanel-content.active');
+            if (content) {
+                const msg = document.createElement('div');
+                msg.className = 'tagPanel-message';
+                msg.textContent = message;
+                content.insertBefore(msg, content.firstChild);
+
+                // 3秒后移除消息
+                setTimeout(() => {
+                    msg.remove();
+                }, 3000);
             }
-        });
+        },
 
-        // 如果切换到设置页，刷新统计
-        if (tabName === 'interface-settings') {
-            this.settingsManager.updateStatistics();
+        /**
+         * 更新设置信息显示
+         */
+        updateInfo: function() {
+            const infoDiv = document.getElementById('tagPanel-info');
+            if (!infoDiv) return;
+
+            const cache = DataManager.getCache();
+            const cacheTime = cache ? new Date(cache.timestamp).toLocaleString('zh-CN') : '无';
+            const dataCount = this.allData.length || '未加载';
+
+            infoDiv.innerHTML = `
+                <p>📊 当前数据条数: <strong>${dataCount}</strong></p>
+                <p>⏰ 缓存时间: <strong>${cacheTime}</strong></p>
+                <p>🔑 快捷键: <strong>${getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY}</strong></p>
+                <p>✨ 脚本版本: <strong>2.0</strong></p>
+            `;
         }
-    }
+    };
 
-    // 快捷键处理
-    handleShortcut(e) {
-        const shortcutKey = GM_getValue('tagPanel_shortcut_key', 'Alt+T');
-        
-        if (this.matchesShortcut(e, shortcutKey)) {
-            e.preventDefault();
-            this.togglePanel();
-        }
-    }
+    // ========== 快捷键管理模块 ==========
+    const HotkeyManager = {
+        currentHotkey: null,
 
-    // 检查是否匹配快捷键
-    matchesShortcut(e, shortcut) {
-        const parts = shortcut.split('+').map(p => p.trim().toLowerCase());
-        
-        const hasCtrl = parts.includes('ctrl') && e.ctrlKey;
-        const hasAlt = parts.includes('alt') && e.altKey;
-        const hasShift = parts.includes('shift') && e.shiftKey;
-        
-        let keyMatch = false;
-        for (let part of parts) {
-            if (!['ctrl', 'alt', 'shift'].includes(part)) {
-                keyMatch = e.key.toLowerCase() === part || e.code.toLowerCase() === `key${part}`;
-                break;
+        /**
+         * 初始化快捷键
+         */
+        init: function() {
+            const hotkey = getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY;
+            this.bind(hotkey);
+        },
+
+        /**
+         * 绑定快捷键
+         */
+        bind: function(hotkeyStr) {
+            this.unbind();
+            this.currentHotkey = hotkeyStr;
+
+            document.addEventListener('keydown', this.handleKeydown.bind(this));
+            console.log('快捷键已绑定:', hotkeyStr);
+        },
+
+        /**
+         * 解除快捷键绑定
+         */
+        unbind: function() {
+            if (this.currentHotkey) {
+                document.removeEventListener('keydown', this.handleKeydown.bind(this));
+                console.log('快捷键已解除:', this.currentHotkey);
             }
+        },
+
+        /**
+         * 处理按键事件
+         */
+        handleKeydown: function(e) {
+            if (!this.currentHotkey) return;
+
+            const hotkeyParts = this.currentHotkey.toLowerCase().split('+');
+            const isCtrl = hotkeyParts.includes('ctrl') && (e.ctrlKey || e.metaKey);
+            const isShift = hotkeyParts.includes('shift') && e.shiftKey;
+            const isAlt = hotkeyParts.includes('alt') && e.altKey;
+
+            // 获取主键（最后一个部分）
+            const mainKey = hotkeyParts[hotkeyParts.length - 1].toLowerCase();
+            const pressedKey = e.key.toLowerCase();
+
+            // 比对主键
+            const mainKeyMatch = mainKey === pressedKey ||
+                                mainKey === e.code.toLowerCase() ||
+                                this.getKeyName(e) === mainKey;
+
+            if (mainKeyMatch && isCtrl && isShift) {
+                e.preventDefault();
+                UIManager.togglePanel();
+            }
+        },
+
+        /**
+         * 获取按键名称
+         */
+        getKeyName: function(e) {
+            const keyMap = {
+                'a': 'a', 'b': 'b', 'c': 'c', 'd': 'd', 'e': 'e', 'f': 'f', 'g': 'g',
+                'h': 'h', 'i': 'i', 'j': 'j', 'k': 'k', 'l': 'l', 'm': 'm', 'n': 'n',
+                'o': 'o', 'p': 'p', 'q': 'q', 'r': 'r', 's': 's', 't': 't', 'u': 'u',
+                'v': 'v', 'w': 'w', 'x': 'x', 'y': 'y', 'z': 'z'
+            };
+            return keyMap[e.key.toLowerCase()] || e.key.toLowerCase();
+        }
+    };
+
+    // ========== 初始化脚本 ==========
+    function initScript() {
+        console.log('脚本初始化开始...');
+
+        // 初始化UI
+        UIManager.init();
+
+        // 初始化快捷键
+        HotkeyManager.init();
+
+        // 恢复按钮显示状态
+        const isLaunchBtnHidden = getStorage('launchBtnHidden');
+        if (isLaunchBtnHidden) {
+            document.getElementById('tagPanel-launch-btn').style.display = 'none';
         }
 
-        const ctrlNeeded = parts.includes('ctrl');
-        const altNeeded = parts.includes('alt');
-        const shiftNeeded = parts.includes('shift');
+        // 面板默认隐藏
+        document.getElementById('tagPanel-container').style.display = 'none';
 
-        return keyMatch && 
-               (!ctrlNeeded || hasCtrl) && 
-               (!altNeeded || hasAlt) && 
-               (!shiftNeeded || hasShift);
+        console.log('脚本初始化完成！');
+        console.log('快捷键:', getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY);
+        console.log('点击按钮或使用快捷键打开面板');
     }
 
-    // 恢复设置
-    restoreSettings() {
-        const hideBtn = GM_getValue('tagPanel_hide_btn', false);
-        if (hideBtn) {
-            this.launchBtn.classList.add('hidden');
-        }
+    // 等待DOM加载完成后初始化
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initScript);
+    } else {
+        initScript();
     }
 
-    // HTML转义
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-}
+})();
