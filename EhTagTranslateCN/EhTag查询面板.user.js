@@ -5,6 +5,7 @@
 // @description  查询e站Tag
 // @author       https://t.me/BGG_Comics
 // @match        *://*/*
+// @icon         https://www.e-hentai.org/favicon.ico
 // @license      GPL-3.0
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -847,11 +848,55 @@
             if (!query.trim()) {
                 this.filteredData = this.allData;
             } else {
+                const q = query.toLowerCase();
+
+                // 先过滤
                 this.filteredData = this.allData.filter(tag =>
-                    fuzzyMatch(query, tag.english) ||
-                    fuzzyMatch(query, tag.chinese) ||
-                    fuzzyMatch(query, tag.description)
+                    fuzzyMatch(q, tag.english) ||
+                    fuzzyMatch(q, tag.chinese)
                 );
+
+                // 再排序
+                this.filteredData.sort((a, b) => {
+                    // 1. 完全匹配
+                    const aEngComplete = a.english.toLowerCase() === q;
+                    const bEngComplete = b.english.toLowerCase() === q;
+                    const aChiComplete = a.chinese === q;
+                    const bChiComplete = b.chinese === q;
+
+                    if (aEngComplete && !bEngComplete) return -1;
+                    if (bEngComplete && !aEngComplete) return 1;
+                    if (aChiComplete && !bChiComplete) return -1;
+                    if (bChiComplete && !aChiComplete) return 1;
+
+                    // 2. 包含匹配
+                    const aEngIncludes = a.english.toLowerCase().includes(q);
+                    const bEngIncludes = b.english.toLowerCase().includes(q);
+                    const aChiIncludes = a.chinese.includes(q);
+                    const bChiIncludes = b.chinese.includes(q);
+
+                    if (aEngIncludes && !bEngIncludes) return -1;
+                    if (bEngIncludes && !aEngIncludes) return 1;
+                    if (aChiIncludes && !bChiIncludes) return -1;
+                    if (bChiIncludes && !aChiIncludes) return 1;
+
+                    // 3. 位置靠前优先
+                    const aEngIndex = a.english.toLowerCase().indexOf(q);
+                    const bEngIndex = b.english.toLowerCase().indexOf(q);
+                    const aChiIndex = a.chinese.indexOf(q);
+                    const bChiIndex = b.chinese.indexOf(q);
+
+                    const aMinIndex = Math.min(
+                        aEngIndex >= 0 ? aEngIndex : Infinity,
+                        aChiIndex >= 0 ? aChiIndex : Infinity
+                    );
+                    const bMinIndex = Math.min(
+                        bEngIndex >= 0 ? bEngIndex : Infinity,
+                        bChiIndex >= 0 ? bChiIndex : Infinity
+                    );
+
+                    return aMinIndex - bMinIndex;
+                });
             }
             this.renderTags();
         },
