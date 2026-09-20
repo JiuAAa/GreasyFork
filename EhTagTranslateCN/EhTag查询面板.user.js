@@ -631,7 +631,7 @@
             launchBtn.className = 'tagPanel-launch-btn';
             launchBtn.id = 'tagPanel-launch-btn';
             launchBtn.textContent = '🏷️';
-            launchBtn.title = '点击打开标签查询面板 (快捷键: ' + (getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY) + ')';
+            launchBtn.title = '点击打开Eh标签查询面板 (快捷键: ' + (getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY) + ')';
             document.body.appendChild(launchBtn);
 
             // 创建主面板
@@ -642,7 +642,7 @@
             container.innerHTML = `
                 <!-- 标题栏 -->
                 <div class="tagPanel-header">
-                    <h2 class="tagPanel-title">📚 标签查询面板</h2>
+                    <h2 class="tagPanel-title">🏷️ Eh标签查询面板</h2>
                     <button class="tagPanel-close-btn" id="tagPanel-close-btn">✕</button>
                 </div>
 
@@ -655,7 +655,7 @@
 
                 <!-- 查询标签页 -->
                 <div class="tagPanel-content active" data-tab="search">
-                    <input type="text" class="tagPanel-search-input" id="tagPanel-search" placeholder="搜索英文/中文/描述...">
+                    <input type="text" class="tagPanel-search-input" id="tagPanel-search" placeholder="搜索英文/中文...">
                     <div class="tagPanel-tags-list" id="tagPanel-tags-list"></div>
                 </div>
 
@@ -1103,7 +1103,7 @@
             }
 
             setStorage('hotkey', hotkeyInput);
-            document.getElementById('tagPanel-launch-btn').title = '点击打开标签查询面板 (快捷键: ' + hotkeyInput + ')';
+            document.getElementById('tagPanel-launch-btn').title = '点击打开Eh标签查询面板 (快捷键: ' + hotkeyInput + ')';
             this.showMessage('✅ 快捷键已保存: ' + hotkeyInput);
 
             // 重新绑定快捷键
