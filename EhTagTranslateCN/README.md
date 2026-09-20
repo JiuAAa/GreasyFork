@@ -21,6 +21,11 @@ Eh中文标签提取工具
 EhTag数据库面板
   - 做的很烂，但是能用
   - 数据从 EhTagTranslation 项目获取
+  - 弃用，新做 EhTag查询面板
 
 nhentai图像链接提取器
   - 如题
+
+EhTag查询面板
+  - 数据从 EhTagTranslation 项目获取
+  - 数据由个人整理
