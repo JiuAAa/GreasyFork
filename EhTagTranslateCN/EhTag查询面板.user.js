@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EhTag查询面板
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  查询e站Tag
 // @author       https://t.me/BGG_Comics
 // @match        *://*/*
@@ -289,8 +289,13 @@
                     position: fixed;
                     bottom: 100px;
                     right: 20px;
-                    width: 500px;
-                    height: 600px;
+                    width: 90vw;
+                    max-width: 500px;
+                    height: 70vh;
+                    max-height: 600px;
+                    min-height: 300px;
+                    transform-origin: bottom right;
+                    transform: scale(var(--tagPanel-scale, 1));
                     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
                     border: 2px solid #FFD700;
                     border-radius: 10px;
@@ -1478,8 +1483,7 @@
 
             infoDiv.innerHTML = `
                 <p>📊 当前数据条数: <strong>${dataCount}</strong></p>
-                <p>🔑 快捷键: <strong>${getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY}</strong></p>
-                <p>✨ 当前版本: <strong>1.3</strong></p>
+                <br>
                 <p>😍 作者频道: <a href="https://t.me/BGG_Comics" target="_blank"><strong>【BGG】本子！都是本子！❤️</strong></a></p>
             `;
         }
