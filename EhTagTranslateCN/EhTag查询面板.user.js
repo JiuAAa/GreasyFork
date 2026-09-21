@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EhTag查询面板
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.2
 // @description  查询e站Tag
 // @author       https://t.me/BGG_Comics
 // @match        *://*/*
@@ -14,6 +14,8 @@
 // @grant        GM_listValues
 // @grant        unsafeWindow
 // @run-at       document-start
+// @downloadURL https://update.sleazyfork.org/scripts/596651/EhTag%E6%9F%A5%E8%AF%A2%E9%9D%A2%E6%9D%BF.user.js
+// @updateURL https://update.sleazyfork.org/scripts/596651/EhTag%E6%9F%A5%E8%AF%A2%E9%9D%A2%E6%9D%BF.meta.js
 // ==/UserScript==
 
 (function() {
@@ -288,7 +290,7 @@
                     bottom: 100px;
                     right: 20px;
                     width: 500px;
-                    max-height: 600px;
+                    height: 600px;
                     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
                     border: 2px solid #FFD700;
                     border-radius: 10px;
@@ -616,9 +618,236 @@
                 .tagPanel-dataset-delete-btn:hover {
                     background: #a00000;
                 }
+
+                /* ===== 手机适配（768px 以下）===== */
+                @media (max-width: 768px) {
+                    /* 启动按钮移到底部中央 */
+                    .tagPanel-launch-btn {
+                        bottom: 20px;
+                        top: auto;
+                        right: 50%;
+                        transform: translateX(50%);
+                        width: 50px;
+                        height: 50px;
+                        font-size: 20px;
+                    }
+
+                    .tagPanel-launch-btn:hover {
+                        transform: translateX(50%) scale(1.05);
+                    }
+
+                    /* 主面板全屏或接近全屏 */
+                    .tagPanel-container {
+                        bottom: 70px !important;
+                        right: auto !important;
+                        left: 10px !important;
+                        width: calc(100% - 20px) !important;
+                        max-height: calc(100vh - 100px) !important;
+                        max-width: none;
+                        border-radius: 8px;
+                    }
+
+                    /* 标题栏缩小 */
+                    .tagPanel-title {
+                        font-size: 16px;
+                    }
+
+                    .tagPanel-close-btn {
+                        font-size: 20px;
+                    }
+
+                    /* 标签页字体缩小 */
+                    .tagPanel-tab {
+                        padding: 8px 5px;
+                        font-size: 12px;
+                    }
+
+                    /* 搜索框优化 */
+                    .tagPanel-search-input {
+                        font-size: 16px;
+                        padding: 12px;
+                        margin-bottom: 12px;
+                    }
+
+                    /* 内容区内边距优化 */
+                    .tagPanel-content {
+                        padding: 12px;
+                    }
+
+                    /* 标签项目卡片优化 */
+                    .tagPanel-tag-item {
+                        padding: 12px;
+                        min-height: 50px;
+                        border-radius: 8px;
+                    }
+
+                    .tagPanel-tag-english {
+                        font-size: 16px;
+                    }
+
+                    .tagPanel-tag-chinese {
+                        font-size: 14px;
+                        margin-top: 6px;
+                    }
+
+                    .tagPanel-tag-description {
+                        font-size: 12px;
+                        margin-top: 6px;
+                    }
+
+                    /* 按钮触摸友好 */
+                    .tagPanel-settings-btn {
+                        min-height: 44px;
+                        padding: 12px 16px;
+                        font-size: 13px;
+                        margin-right: 0;
+                        margin-bottom: 8px;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+
+                    .tagPanel-settings-btn:not(.secondary) {
+                        width: 100%;
+                    }
+
+                    /* 标签列表间距 */
+                    .tagPanel-tags-list {
+                        gap: 8px;
+                        padding-right: 8px;
+                    }
+
+                    /* 隐藏 hover 效果，改用 active 状态 */
+                    @media (hover: none) {
+                        .tagPanel-tag-item:hover {
+                            transform: none;
+                            box-shadow: none;
+                            border-left-color: #FFD700;
+                        }
+
+                        .tagPanel-tag-item:active {
+                            background: linear-gradient(135deg, #FFD700, #FFA500);
+                            color: #000;
+                        }
+
+                        .tagPanel-tag-item:active .tagPanel-tag-english {
+                            color: #000;
+                        }
+
+                        .tagPanel-tag-item:active .tagPanel-tag-chinese {
+                            color: #000;
+                        }
+
+                        .tagPanel-settings-btn:hover {
+                            transform: none;
+                        }
+
+                        .tagPanel-settings-btn:active {
+                            opacity: 0.8;
+                        }
+                    }
+
+                    /* 数据集项目优化 */
+                    .tagPanel-dataset-item {
+                        flex-direction: column;
+                        align-items: flex-start;
+                    }
+
+                    .tagPanel-dataset-delete-btn {
+                        width: 100%;
+                        margin-top: 8px;
+                    }
+
+                    /* 设置组优化 */
+                    .tagPanel-settings-group {
+                        margin-bottom: 12px;
+                        padding-bottom: 12px;
+                    }
+
+                    .tagPanel-settings-label {
+                        font-size: 13px;
+                        margin-bottom: 8px;
+                    }
+
+                    /* 快捷键输入框 */
+                    .tagPanel-hotkey-input {
+                        font-size: 16px;
+                        padding: 12px;
+                    }
+
+                    /* 消息提示 */
+                    .tagPanel-message {
+                        font-size: 13px;
+                        padding: 12px;
+                    }
+                }
+
+                /* ===== 超小屏幕（< 480px）===== */
+                @media (max-width: 480px) {
+                    .tagPanel-container {
+                        bottom: 70px !important;
+                        left: 5px !important;
+                        width: calc(100% - 10px) !important;
+                    }
+
+                    .tagPanel-title {
+                        font-size: 14px;
+                    }
+
+                    .tagPanel-close-btn {
+                        font-size: 18px;
+                    }
+
+                    .tagPanel-tab {
+                        font-size: 10px;
+                        padding: 6px 4px;
+                    }
+
+                    .tagPanel-launch-btn {
+                        width: 45px;
+                        height: 45px;
+                        font-size: 18px;
+                    }
+
+                    .tagPanel-tag-english {
+                        font-size: 14px;
+                    }
+
+                    .tagPanel-content {
+                        padding: 10px;
+                    }
+
+                    .tagPanel-search-input {
+                        font-size: 16px;
+                        padding: 10px;
+                        margin-bottom: 10px;
+                    }
+
+                    .tagPanel-settings-btn {
+                        padding: 10px 12px;
+                        font-size: 12px;
+                        min-height: 40px;
+                    }
+                }
+
+                /* ===== 触摸友好设置 ===== */
+                .tagPanel-launch-btn,
+                .tagPanel-tab,
+                .tagPanel-settings-btn,
+                .tagPanel-close-btn,
+                .tagPanel-tag-item {
+                    touch-action: manipulation;
+                    -webkit-tap-highlight-color: transparent;
+                }
+
+                /* ===== 流畅滚动 ===== */
+                .tagPanel-tags-list,
+                .tagPanel-content {
+                    -webkit-overflow-scrolling: touch;
+                }
             `;
             document.head.appendChild(style);
         },
+
 
         /**
          * 创建主面板HTML
@@ -1240,7 +1469,7 @@
             infoDiv.innerHTML = `
                 <p>📊 当前数据条数: <strong>${dataCount}</strong></p>
                 <p>🔑 快捷键: <strong>${getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY}</strong></p>
-                <p>✨ 当前版本: <strong>1.0</strong></p>
+                <p>✨ 当前版本: <strong>1.2</strong></p>
                 <p>😍 作者频道: <a href="https://t.me/BGG_Comics" target="_blank"><strong>【BGG】本子！都是本子！❤️</strong></a></p>
             `;
         }
