@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EhTag查询面板
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  查询e站Tag
 // @author       https://t.me/BGG_Comics
 // @match        *://*/*
@@ -677,22 +677,32 @@
                     /* 标签项目卡片优化 */
                     .tagPanel-tag-item {
                         padding: 12px;
-                        min-height: 50px;
+                        min-height: auto;
                         border-radius: 8px;
+                        display: flex;
+                        flex-direction: column;
+                        box-sizing: border-box;
                     }
 
                     .tagPanel-tag-english {
                         font-size: 16px;
+                        line-height: 1.4;
+                        word-break: break-word;
                     }
 
                     .tagPanel-tag-chinese {
                         font-size: 14px;
                         margin-top: 6px;
+                        line-height: 1.4;
+                        word-break: break-word;
                     }
 
                     .tagPanel-tag-description {
                         font-size: 12px;
                         margin-top: 6px;
+                        line-height: 1.4;
+                        word-break: break-word;
+                        color: #a0a0a0;
                     }
 
                     /* 按钮触摸友好 */
@@ -712,7 +722,7 @@
 
                     /* 标签列表间距 */
                     .tagPanel-tags-list {
-                        gap: 8px;
+                        gap: 10px;
                         padding-right: 8px;
                     }
 
@@ -1469,7 +1479,7 @@
             infoDiv.innerHTML = `
                 <p>📊 当前数据条数: <strong>${dataCount}</strong></p>
                 <p>🔑 快捷键: <strong>${getStorage('hotkey') || CONFIG.DEFAULT_HOTKEY}</strong></p>
-                <p>✨ 当前版本: <strong>1.2</strong></p>
+                <p>✨ 当前版本: <strong>1.3</strong></p>
                 <p>😍 作者频道: <a href="https://t.me/BGG_Comics" target="_blank"><strong>【BGG】本子！都是本子！❤️</strong></a></p>
             `;
         }
